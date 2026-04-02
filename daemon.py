@@ -56,10 +56,21 @@ VOICE_MODE = os.getenv("VOICE_MODE", "polish")
 WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "zh")
 SAMPLE_RATE = 16000
 
+# 快捷键配置（可通过 .config.json 自定义）
+HOTKEY_VOICE = "ctrl+grave"
+HOTKEY_SCREENSHOT = "alt+x"
+HOTKEY_REPEAT = "ctrl+shift+z"
+
 
 def load_config() -> None:
     """从 .config.json 加载持久化配置，覆盖环境变量默认值。"""
-    global OLLAMA_MODEL, VOICE_MODE, WHISPER_LANGUAGE
+    global \
+        OLLAMA_MODEL, \
+        VOICE_MODE, \
+        WHISPER_LANGUAGE, \
+        HOTKEY_VOICE, \
+        HOTKEY_SCREENSHOT, \
+        HOTKEY_REPEAT
     if not CONFIG_PATH.exists():
         return
     try:
@@ -67,6 +78,9 @@ def load_config() -> None:
         OLLAMA_MODEL = cfg.get("ollama_model", OLLAMA_MODEL)
         VOICE_MODE = cfg.get("voice_mode", VOICE_MODE)
         WHISPER_LANGUAGE = cfg.get("whisper_language", WHISPER_LANGUAGE)
+        HOTKEY_VOICE = cfg.get("hotkey_voice", HOTKEY_VOICE)
+        HOTKEY_SCREENSHOT = cfg.get("hotkey_screenshot", HOTKEY_SCREENSHOT)
+        HOTKEY_REPEAT = cfg.get("hotkey_repeat", HOTKEY_REPEAT)
     except Exception:
         pass
 
@@ -77,6 +91,9 @@ def save_config() -> None:
         "ollama_model": OLLAMA_MODEL,
         "voice_mode": VOICE_MODE,
         "whisper_language": WHISPER_LANGUAGE,
+        "hotkey_voice": HOTKEY_VOICE,
+        "hotkey_screenshot": HOTKEY_SCREENSHOT,
+        "hotkey_repeat": HOTKEY_REPEAT,
     }
     try:
         CONFIG_PATH.write_text(json.dumps(cfg, ensure_ascii=False, indent=2))
@@ -95,6 +112,47 @@ _hotkey_grabber: HotkeyGrabber | None = None
 
 # 全局 uinput 虚拟键盘 —— 内核级按键事件，不可被应用检测（main() 中初始化）
 _uinput = None
+
+# 上一次语音识别结果（用于 Ctrl+Shift+Z 重复输入）
+_last_result = ""
+
+# IBus 输入法总线（main() 中初始化）—— 用于直接提交文字到焦点窗口
+_ibus_bus = None
+
+# 终端模拟器 WM_CLASS 名称集合（用于智能粘贴快捷键选择）
+_TERMINALS = frozenset(
+    {
+        "gnome-terminal-server",
+        "gnome-terminal",
+        "konsole",
+        "xfce4-terminal",
+        "alacritty",
+        "kitty",
+        "xterm",
+        "uxterm",
+        "terminator",
+        "tilix",
+        "st",
+        "st-256color",
+        "urxvt",
+        "rxvt",
+        "wezterm-gui",
+        "wezterm",
+        "foot",
+        "sakura",
+        "guake",
+        "tilda",
+        "yakuake",
+        "lxterminal",
+        "mate-terminal",
+        "terminology",
+        "qterminal",
+        "deepin-terminal",
+        "hyper",
+        "tabby",
+        "cool-retro-term",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +193,47 @@ def _play_beep(freq: float = 440, duration: float = 0.1, volume: float = 0.3) ->
         pass  # 提示音非关键功能，失败不影响录音
 
 
+def _parse_hotkey(hotkey_str: str) -> tuple[int, int]:
+    """解析快捷键字符串为 (X11 modifier mask, keysym)。
+
+    格式: "modifier+...+key"
+    修饰符: ctrl, alt, shift, super
+    键名: XK 标准名 (grave, x, z, F1, Escape...)
+
+    例: "ctrl+grave" → (ControlMask, XK_grave)
+        "ctrl+shift+z" → (ControlMask|ShiftMask, XK_z)
+    """
+    parts = hotkey_str.lower().strip().split("+")
+    mask = 0
+    for mod in parts[:-1]:
+        if mod == "ctrl":
+            mask |= X.ControlMask
+        elif mod == "alt":
+            mask |= X.Mod1Mask
+        elif mod == "shift":
+            mask |= X.ShiftMask
+        elif mod == "super":
+            mask |= X.Mod4Mask
+    key_name = parts[-1]
+    keysym = XK.string_to_keysym(key_name)
+    if keysym == 0:
+        # 尝试首字母大写 (XK 标准: "z"→"z", "grave"→"grave", "F1"→"F1")
+        keysym = XK.string_to_keysym(key_name.capitalize())
+    return mask, keysym
+
+
+def _format_hotkey(hotkey_str: str) -> str:
+    """将配置字符串格式化为用户友好的显示文本。"""
+    return (
+        hotkey_str.replace("+", "+")
+        .replace("ctrl", "Ctrl")
+        .replace("alt", "Alt")
+        .replace("shift", "Shift")
+        .replace("super", "Super")
+        .replace("grave", "`")
+    )
+
+
 def copy_to_clipboard(text: str) -> None:
     """跨平台剪贴板写入（X11 / Wayland 自适应）。"""
     session = os.environ.get("XDG_SESSION_TYPE", "x11")
@@ -161,32 +260,104 @@ def paste_from_clipboard() -> None:
     _kb.release(Key.ctrl)
 
 
-def _type_text(text: str) -> None:
-    """通过剪贴板 + Ctrl+V 将文本粘贴到当前焦点窗口。
+def _try_ibus_commit(text: str) -> bool:
+    """Tier 1: 通过 IBus 输入法框架直接提交文字到焦点窗口的输入上下文。
 
-    优先使用 uinput 发送内核级真实按键事件（不可被任何应用检测），
-    若 uinput 不可用则回退到 pynput（XTest 合成按键）。
+    这是真正的输入法级行为 —— 文字直接出现在光标处，
+    无需经过剪贴板，对所有应用（终端/微信/QQ/IDE）一视同仁。
+    """
+    if _ibus_bus is None:
+        return False
+    try:
+        gi.require_version("IBus", "1.0")
+        from gi.repository import IBus as IBusLib
+
+        if not _ibus_bus.is_connected():
+            return False
+        ctx_path = _ibus_bus.current_input_context()
+        if not ctx_path:
+            return False
+        ctx = IBusLib.InputContext.get_input_context(
+            ctx_path, _ibus_bus.get_connection()
+        )
+        ctx.commit_text(IBusLib.Text.new_from_string(text))
+        return True
+    except Exception:
+        return False
+
+
+def _is_terminal_focused() -> bool:
+    """检测当前焦点窗口是否为终端模拟器（通过 X11 WM_CLASS 属性）。"""
+    try:
+        dpy = xdisplay.Display()
+        try:
+            focus = dpy.get_input_focus().focus
+            if not focus or focus == X.NONE:
+                return False
+            # 焦点可能在子窗口，向上遍历查找 WM_CLASS
+            window = focus
+            for _ in range(10):
+                try:
+                    cls = window.get_wm_class()
+                except Exception:
+                    break
+                if cls:
+                    inst, klass = cls[0].lower(), cls[1].lower()
+                    return inst in _TERMINALS or klass in _TERMINALS
+                parent = window.query_tree().parent
+                if parent == window:
+                    break
+                window = parent
+        finally:
+            dpy.close()
+    except Exception:
+        pass
+    return False
+
+
+def _type_text(text: str) -> None:
+    """将文字输入到当前焦点窗口（三级策略）。
+
+    Tier 1: IBus commit_text — 通过输入法框架直接提交（最可靠，无剪贴板副作用）
+    Tier 2: 智能剪贴板粘贴 — 检测窗口类型，终端用 Ctrl+Shift+V，其他用 Ctrl+V
+    Tier 3: 原始 Ctrl+V — pynput 回退（XTest 合成按键）
     """
     time.sleep(0.1)  # 等待焦点稳定
+
+    # ---- Tier 1: IBus 输入法直接提交 ----
+    if _try_ibus_commit(text):
+        return
+
+    # ---- Tier 2 & 3: 剪贴板粘贴 ----
     copy_to_clipboard(text)
     time.sleep(0.05)
+    is_term = _is_terminal_focused()
+
     if _uinput:
         try:
             from evdev import ecodes
 
             _uinput.write(ecodes.EV_KEY, ecodes.KEY_LEFTCTRL, 1)
+            if is_term:
+                _uinput.write(ecodes.EV_KEY, ecodes.KEY_LEFTSHIFT, 1)
             _uinput.write(ecodes.EV_KEY, ecodes.KEY_V, 1)
             _uinput.syn()
             time.sleep(0.02)
             _uinput.write(ecodes.EV_KEY, ecodes.KEY_V, 0)
+            if is_term:
+                _uinput.write(ecodes.EV_KEY, ecodes.KEY_LEFTSHIFT, 0)
             _uinput.write(ecodes.EV_KEY, ecodes.KEY_LEFTCTRL, 0)
             _uinput.syn()
             return
         except Exception:
             pass
-    # 回退到 pynput (XTest 合成按键)
+    # Tier 3: pynput 回退
     _kb.press(Key.ctrl)
+    if is_term:
+        _kb.press(Key.shift)
     _kb.tap("v")
+    if is_term:
+        _kb.release(Key.shift)
     _kb.release(Key.ctrl)
 
 
@@ -252,17 +423,17 @@ def _get_mouse_position() -> tuple[int, int] | None:
 ALL_CSS = """
 .status-bar {
     background-color: rgba(15, 15, 25, 0.92);
-    border-radius: 20px;
+    border-radius: 22px;
     border: 1px solid rgba(100, 140, 255, 0.25);
-    padding: 6px 18px;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+    padding: 10px 24px;
+    box-shadow: 0 2px 16px rgba(0, 0, 0, 0.45);
 }
 .status-dot {
-    min-width: 8px;
-    min-height: 8px;
-    border-radius: 4px;
+    min-width: 10px;
+    min-height: 10px;
+    border-radius: 5px;
     background-color: #4ade80;
-    margin-right: 4px;
+    margin-right: 6px;
 }
 .status-recording .status-dot { background-color: #ef4444; }
 .status-busy .status-dot { background-color: #f59e0b; }
@@ -270,7 +441,7 @@ ALL_CSS = """
 .status-success .status-dot { background-color: #22c55e; }
 .status-label {
     color: #c0c8e0;
-    font-size: 12px;
+    font-size: 14px;
     font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
 }
 .status-recording .status-label { color: #fca5a5; }
@@ -279,7 +450,7 @@ ALL_CSS = """
 .status-success .status-label { color: #86efac; }
 .status-hint {
     color: rgba(160, 168, 190, 0.5);
-    font-size: 10px;
+    font-size: 11px;
 }
 
 /* 翻译结果覆盖层 */
@@ -392,7 +563,11 @@ class StatusBar(Gtk.Window):
         # 状态文字
         self.label = Gtk.Label()
         self.label.get_style_context().add_class("status-label")
-        self.label.set_text("Ctrl+`语音 | Alt+X截图")
+        self.label.set_text(
+            f"{_format_hotkey(HOTKEY_VOICE)}语音 | "
+            f"{_format_hotkey(HOTKEY_SCREENSHOT)}截图 | "
+            f"{_format_hotkey(HOTKEY_REPEAT)}重复"
+        )
         hbox.pack_start(self.label, False, False, 0)
 
         # 分隔
@@ -689,7 +864,13 @@ class VoiceRecorder:
         if not self._frames:
             set_status("没有录到声音", "error")
             GLib.timeout_add(
-                3000, lambda: (set_status("就绪  Ctrl+`语音 | Alt+X截图"), False)[-1]
+                3000,
+                lambda: (
+                    set_status(
+                        f"{_format_hotkey(HOTKEY_VOICE)}语音 | {_format_hotkey(HOTKEY_SCREENSHOT)}截图 | {_format_hotkey(HOTKEY_REPEAT)}重复"
+                    ),
+                    False,
+                )[-1],
             )
             return
 
@@ -748,6 +929,8 @@ class VoiceRecorder:
             result = resp.json()
             final = result.get("final_text", "")
             if final:
+                global _last_result
+                _last_result = final
                 old_clipboard = _get_clipboard_text()
                 _type_text(final)
                 time.sleep(0.3)
@@ -770,7 +953,9 @@ class VoiceRecorder:
                 GLib.timeout_add(
                     3000,
                     lambda: (
-                        set_status("就绪  Ctrl+`语音 | Alt+X截图")
+                        set_status(
+                            f"{_format_hotkey(HOTKEY_VOICE)}语音 | {_format_hotkey(HOTKEY_SCREENSHOT)}截图 | {_format_hotkey(HOTKEY_REPEAT)}重复"
+                        )
                         if _q.empty()
                         and not _screenshot_busy
                         and not (_hotkey_grabber and _hotkey_grabber.voice_active)
@@ -797,26 +982,29 @@ def screenshot_translate() -> None:
             return
         _screenshot_busy = True
 
+    # 在主线程立即启动 maim，消除线程调度延迟
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+        tmp_path = f.name
+    proc = subprocess.Popen(
+        ["maim", "-s", tmp_path],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
     set_status("截图选择中...", "busy")
-    threading.Thread(target=_do_screenshot_translate, daemon=True).start()
+    threading.Thread(
+        target=_do_screenshot_translate, args=(proc, tmp_path), daemon=True
+    ).start()
 
 
-def _do_screenshot_translate() -> None:
-    """后台执行截图翻译流程。"""
+def _do_screenshot_translate(proc: subprocess.Popen, tmp_path: str) -> None:
+    """后台执行截图翻译流程（maim 进程已在主线程启动）。"""
     global _screenshot_busy
-    tmp_path = None
     try:
-        # 1. maim -s 截图选区
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-            tmp_path = f.name
-
-        result = subprocess.run(
-            ["maim", "-s", tmp_path],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        if result.returncode != 0:
-            set_status("就绪  Ctrl+`语音 | Alt+X截图")
+        # 1. 等待 maim 选区完成（进程已在主线程启动以消除延迟）
+        if proc.wait() != 0:
+            set_status(
+                f"{_format_hotkey(HOTKEY_VOICE)}语音 | {_format_hotkey(HOTKEY_SCREENSHOT)}截图 | {_format_hotkey(HOTKEY_REPEAT)}重复"
+            )
             return
 
         # 2. 计算选区几何：图片尺寸 + 鼠标释放位置
@@ -868,7 +1056,9 @@ def _do_screenshot_translate() -> None:
         GLib.timeout_add(
             5000,
             lambda: (
-                set_status("就绪  Ctrl+`语音 | Alt+X截图")
+                set_status(
+                    f"{_format_hotkey(HOTKEY_VOICE)}语音 | {_format_hotkey(HOTKEY_SCREENSHOT)}截图 | {_format_hotkey(HOTKEY_REPEAT)}重复"
+                )
                 if not _screenshot_busy
                 and not (_hotkey_grabber and _hotkey_grabber.voice_active)
                 else None,
@@ -905,8 +1095,18 @@ class HotkeyGrabber:
         self.dpy = xdisplay.Display()
         self.dpy.set_error_handler(self._ignore_error)
         self.root = self.dpy.screen().root
-        self.grave_kc = self.dpy.keysym_to_keycode(XK.XK_grave)
-        self.x_kc = self.dpy.keysym_to_keycode(XK.XK_x)
+
+        # 从配置解析快捷键
+        v_mask, v_sym = _parse_hotkey(HOTKEY_VOICE)
+        s_mask, s_sym = _parse_hotkey(HOTKEY_SCREENSHOT)
+        r_mask, r_sym = _parse_hotkey(HOTKEY_REPEAT)
+
+        self.voice_kc = self.dpy.keysym_to_keycode(v_sym)
+        self.voice_mask = v_mask
+        self.screen_kc = self.dpy.keysym_to_keycode(s_sym)
+        self.screen_mask = s_mask
+        self.repeat_kc = self.dpy.keysym_to_keycode(r_sym)
+        self.repeat_mask = r_mask
 
     @staticmethod
     def _ignore_error(err, *args):
@@ -915,15 +1115,22 @@ class HotkeyGrabber:
     def grab(self) -> None:
         for lock in LOCK_MASKS:
             self.root.grab_key(
-                self.grave_kc,
-                X.ControlMask | lock,
+                self.voice_kc,
+                self.voice_mask | lock,
                 True,
                 X.GrabModeAsync,
                 X.GrabModeAsync,
             )
             self.root.grab_key(
-                self.x_kc,
-                X.Mod1Mask | lock,
+                self.screen_kc,
+                self.screen_mask | lock,
+                True,
+                X.GrabModeAsync,
+                X.GrabModeAsync,
+            )
+            self.root.grab_key(
+                self.repeat_kc,
+                self.repeat_mask | lock,
                 True,
                 X.GrabModeAsync,
                 X.GrabModeAsync,
@@ -932,8 +1139,9 @@ class HotkeyGrabber:
 
     def ungrab(self) -> None:
         for lock in LOCK_MASKS:
-            self.root.ungrab_key(self.grave_kc, X.ControlMask | lock)
-            self.root.ungrab_key(self.x_kc, X.Mod1Mask | lock)
+            self.root.ungrab_key(self.voice_kc, self.voice_mask | lock)
+            self.root.ungrab_key(self.screen_kc, self.screen_mask | lock)
+            self.root.ungrab_key(self.repeat_kc, self.repeat_mask | lock)
         self.dpy.flush()
 
     def start(self) -> None:
@@ -952,17 +1160,19 @@ class HotkeyGrabber:
 
     def _handle_event(self, event) -> None:
         if event.type == X.KeyPress:
-            if event.detail == self.grave_kc:
+            if event.detail == self.voice_kc:
                 if self._pending_release_id:
                     GLib.source_remove(self._pending_release_id)
                     self._pending_release_id = 0
                 if not self.voice_active:
                     self.voice_active = True
                     self.recorder.start()
-            elif event.detail == self.x_kc:
+            elif event.detail == self.screen_kc:
                 screenshot_translate()
+            elif event.detail == self.repeat_kc:
+                self._repeat_last()
         elif event.type == X.KeyRelease:
-            if event.detail == self.grave_kc and self.voice_active:
+            if event.detail == self.voice_kc and self.voice_active:
                 if self._pending_release_id:
                     GLib.source_remove(self._pending_release_id)
                 self._pending_release_id = GLib.timeout_add(50, self._do_release)
@@ -976,6 +1186,50 @@ class HotkeyGrabber:
             # 避免在连续快速录音时出现热键注册空白期
             # 粘贴后的 _request_regrab + 500ms _refresh_grab 已覆盖防护
         return False
+
+    def _repeat_last(self) -> None:
+        """重复输入上一次的语音识别结果。"""
+        if not _last_result:
+            set_status("还没有识别记录", "error")
+            GLib.timeout_add(
+                2000,
+                lambda: (
+                    set_status(
+                        f"{_format_hotkey(HOTKEY_VOICE)}语音 | "
+                        f"{_format_hotkey(HOTKEY_SCREENSHOT)}截图 | "
+                        f"{_format_hotkey(HOTKEY_REPEAT)}重复"
+                    ),
+                    False,
+                )[-1],
+            )
+            return
+        set_status("重复输入中...", "busy")
+        threading.Thread(target=self._do_repeat, daemon=True).start()
+
+    def _do_repeat(self) -> None:
+        """在后台线程执行重复输入（避免阻塞 GTK 主循环）。"""
+        try:
+            old_clipboard = _get_clipboard_text()
+            _type_text(_last_result)
+            time.sleep(0.3)
+            current = _get_clipboard_text()
+            if current == _last_result:
+                copy_to_clipboard(old_clipboard)
+            GLib.idle_add(_request_regrab)
+            set_status("已重复输入", "success")
+        except Exception as exc:
+            set_status(f"重复输入失败: {str(exc)[:40]}", "error")
+        GLib.timeout_add(
+            3000,
+            lambda: (
+                set_status(
+                    f"{_format_hotkey(HOTKEY_VOICE)}语音 | "
+                    f"{_format_hotkey(HOTKEY_SCREENSHOT)}截图 | "
+                    f"{_format_hotkey(HOTKEY_REPEAT)}重复"
+                ),
+                False,
+            )[-1],
+        )
 
     def _on_xlib_event(self, fd, condition) -> bool:
         try:
@@ -1035,7 +1289,7 @@ def startup_check() -> list[str]:
 
 
 def main() -> None:
-    global _status_bar, _hotkey_grabber, _uinput
+    global _status_bar, _hotkey_grabber, _uinput, _ibus_bus
 
     # 加载持久化配置
     load_config()
@@ -1043,8 +1297,11 @@ def main() -> None:
     issues = startup_check()
 
     print("Ollama Voice Input 守护进程已启动")
-    print(f"  语音输入: Ctrl+`  按住说话，松开自动粘贴 (模式={VOICE_MODE})")
-    print(f"  截图翻译: Alt+X   框选截图，OCR+翻译 (tesseract+Google)")
+    print(
+        f"  语音输入: {_format_hotkey(HOTKEY_VOICE)}  按住说话，松开自动粘贴 (模式={VOICE_MODE})"
+    )
+    print(f"  截图翻译: {_format_hotkey(HOTKEY_SCREENSHOT)}   框选截图，OCR+翻译")
+    print(f"  重复输入: {_format_hotkey(HOTKEY_REPEAT)}  重复上一次识别结果")
     print(f"  API 地址: {API_BASE}")
 
     if issues:
@@ -1062,13 +1319,27 @@ def main() -> None:
         from evdev import UInput, ecodes
 
         _uinput = UInput(
-            {ecodes.EV_KEY: [ecodes.KEY_LEFTCTRL, ecodes.KEY_V]},
+            {ecodes.EV_KEY: [ecodes.KEY_LEFTCTRL, ecodes.KEY_LEFTSHIFT, ecodes.KEY_V]},
             name="ollama-voice-input",
         )
         print("  uinput: 已初始化（内核级按键模式）")
     except Exception as e:
         print(f"  uinput: 不可用，使用 pynput 回退 ({e})")
         _uinput = None
+
+    # 初始化 IBus 输入法总线（用于 Tier 1 直接提交文字）
+    try:
+        gi.require_version("IBus", "1.0")
+        from gi.repository import IBus as IBusLib
+
+        _ibus_bus_tmp = IBusLib.Bus()
+        if _ibus_bus_tmp.is_connected():
+            _ibus_bus = _ibus_bus_tmp
+            print("  IBus: 已连接（输入法直接提交模式）")
+        else:
+            print("  IBus: 守护进程未运行，使用剪贴板模式")
+    except Exception as e:
+        print(f"  IBus: 不可用 ({e})，使用剪贴板模式")
 
     # 初始化快捷键
     recorder = VoiceRecorder()

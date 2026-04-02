@@ -6,6 +6,7 @@
 
 按住快捷键说话 → Whisper 转文字 → Ollama 润色 → 自动输入到任意应用
 
+[![Version](https://img.shields.io/badge/Version-2.0-blue?style=flat-square)](https://github.com/spp417833515/voice-input)
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://python.org)
 [![Ollama](https://img.shields.io/badge/Ollama-本地LLM-000000?logo=ollama)](https://ollama.com)
 [![Whisper](https://img.shields.io/badge/Faster--Whisper-语音识别-green)](https://github.com/SYSTRAN/faster-whisper)
@@ -18,9 +19,9 @@
 
 ## ✨ 特性
 
-🗣️ **全局语音输入** — 在任意应用中按住 `Ctrl+`` 说话，松开后自动将文字输入到光标位置（微信、QQ、终端、IDE 均可用）
+🗣️ **全局语音输入** — 在任意应用中按住快捷键说话，松开后自动将文字输入到光标位置
 
-📸 **截图翻译** — `Alt+X` 框选屏幕任意区域，OCR 识别 + 翻译，结果直接浮窗显示在原位
+📸 **截图翻译** — 框选屏幕任意区域，OCR 识别 + 翻译，结果直接浮窗显示在原位
 
 🔒 **完全离线** — Whisper 语音识别 + Ollama 大模型，全部本地运行，隐私安全
 
@@ -33,6 +34,16 @@
 🌐 **Web 界面** — 浏览器中也能用，提供录音、历史记录、模型管理等完整功能
 
 🪶 **零依赖轻量版** — 不装任何 Python 包也能用，浏览器原生语音识别 + Ollama 润色
+
+### v2.0 新增
+
+🔄 **三级输入策略** — IBus → 智能剪贴板 → pynput 三级递降，确保微信、QQ、终端、IDE 全场景可用
+
+⌨️ **可配置快捷键** — 在 `.config.json` 中自定义所有快捷键，无需改代码
+
+🔁 **重复输入** — 一键重复上次语音识别结果，无需再次录音
+
+🎯 **截图响应优化** — maim 进程在主线程预启动，消除线程调度延迟
 
 ---
 
@@ -60,10 +71,15 @@
 └────────┬─────────┘
          │
          ▼
-┌──────────────────┐
-│   自动输入到光标    │  ← uinput 内核级按键，兼容微信/QQ
-│   (Ctrl+V 粘贴)   │
-└──────────────────┘
+┌──────────────────────────────────────┐
+│   三级输入策略（自动递降）              │
+│                                      │
+│  1️⃣ IBus commit_text  ← 输入法级别    │
+│     ↓ 失败                            │
+│  2️⃣ 智能剪贴板粘贴    ← uinput 按键   │
+│     ↓ 失败                            │
+│  3️⃣ pynput 合成按键   ← X11 兜底      │
+└──────────────────────────────────────┘
 ```
 
 ---
@@ -133,13 +149,33 @@ python3 -m http.server 8000
 
 ## ⌨️ 快捷键
 
+### 默认快捷键
+
 | 快捷键 | 功能 | 说明 |
 |:---:|:---|:---|
 | `Ctrl+`` | **语音输入** | 按住说话，松开后自动转写并输入 |
 | `Alt+X` | **截图翻译** | 框选区域，OCR + 翻译，浮窗显示 |
+| `Ctrl+Shift+Z` | **重复输入** | 重新输入上次的识别结果 |
 | `Esc` | 关闭翻译浮窗 | 或点击浮窗外部自动关闭 |
 
 > 快捷键通过 X11 `XGrabKey` 注册，在任何应用中都可使用（真正的全局热键）。
+
+### 自定义快捷键
+
+所有快捷键均可通过 `.config.json` 配置：
+
+```json
+{
+  "hotkey_voice": "ctrl+grave",
+  "hotkey_screenshot": "alt+x",
+  "hotkey_repeat": "ctrl+shift+z"
+}
+```
+
+**格式说明**：修饰键 + 按键名，用 `+` 连接。支持的修饰键：`ctrl`、`alt`、`shift`。
+按键名使用 X11 keysym 名称（如 `grave` = `` ` ``，`space`、`f1` 等）。
+
+修改后重启守护进程即可生效。
 
 ---
 
@@ -155,6 +191,20 @@ python3 -m http.server 8000
 
 ---
 
+## 🔌 三级输入策略
+
+v2.0 引入智能三级递降输入策略，确保文字能正确输入到任何应用：
+
+| 级别 | 方式 | 原理 | 适用应用 |
+|:---|:---|:---|:---|
+| **Tier 1** | IBus `commit_text` | 输入法级别提交，不经过剪贴板 | 支持 IBus 的所有应用 |
+| **Tier 2** | 智能剪贴板粘贴 | 自动识别终端(`Ctrl+Shift+V`) / 普通应用(`Ctrl+V`)，使用 uinput 内核按键 | 所有 GUI 应用 |
+| **Tier 3** | pynput 合成按键 | X11 XTest 合成按键作为兜底 | 最大兼容性 |
+
+**终端自动识别**：支持 26 种主流终端（gnome-terminal、konsole、alacritty、kitty、tilix、xterm 等），自动使用终端专用快捷键 `Ctrl+Shift+V`。
+
+---
+
 ## 📁 项目结构
 
 ```
@@ -166,6 +216,7 @@ ollama-voice-input/
 ├── install.sh           # 开机自启安装脚本
 ├── restart.sh           # 快速重启脚本
 ├── requirements.txt     # Python 依赖
+├── .config.json         # 运行时配置（快捷键、语音模式等）
 ├── .env.example         # 环境变量参考
 ├── static/
 │   ├── index.html       # Web 主界面
@@ -257,9 +308,13 @@ systemctl --user disable --now ollama-voice-daemon
 
 ---
 
-## 🔧 微信/QQ 兼容
+## 🔧 微信/QQ/终端 兼容
 
-项目使用 **evdev/uinput** 发送内核级键盘事件，与物理键盘按键完全一致，兼容微信、QQ 等检测合成按键的应用。
+v2.0 的三级输入策略确保在所有应用中正确输入：
+
+1. **IBus 输入法直接提交** — 最干净的方式，不污染剪贴板
+2. **uinput 内核级按键** — 与物理键盘按键完全一致，微信/QQ 无法区分
+3. **终端智能识别** — 自动检测 26 种终端，使用 `Ctrl+Shift+V` 而非 `Ctrl+V`
 
 首次使用需要设置 uinput 权限：
 
@@ -294,7 +349,7 @@ sudo udevadm control --reload-rules
 <summary><b>Q: 快捷键没反应？</b></summary>
 
 1. 确认守护进程在运行：检查悬浮状态栏是否显示
-2. 某些桌面环境可能占用了 `Ctrl+`` 快捷键，需要在系统设置中释放
+2. 某些桌面环境可能占用了默认快捷键，可在 `.config.json` 中修改
 3. 守护进程有 500ms 自动刷新机制，一般稍等即可恢复
 </details>
 
@@ -310,6 +365,12 @@ sudo udevadm control --reload-rules
 安装 CUDA 版本的 PyTorch，然后设置 `WHISPER_DEVICE=cuda`。`start.sh` 会自动检测并设置 CUDA 库路径。
 </details>
 
+<details>
+<summary><b>Q: 如何修改快捷键？</b></summary>
+
+编辑项目目录下的 `.config.json` 文件，修改 `hotkey_voice`、`hotkey_screenshot`、`hotkey_repeat` 字段。格式为 `修饰键+按键名`，例如 `"ctrl+space"`、`"alt+z"`。修改后重启守护进程。
+</details>
+
 ---
 
 ## 🏗️ 技术栈
@@ -319,10 +380,32 @@ sudo udevadm control --reload-rules
 | 语音识别 | [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper) | 本地 STT，支持 GPU 加速 |
 | 文本处理 | [Ollama](https://ollama.com) | 本地 LLM，润色/翻译 |
 | 后端框架 | [FastAPI](https://fastapi.tiangolo.com) + Uvicorn | 异步 HTTP API |
-| 桌面集成 | GTK3 + python-xlib | 全局热键、悬浮窗、状态栏 |
+| 桌面集成 | GTK3 + python-xlib + IBus | 全局热键、悬浮窗、输入法集成 |
 | 音频采集 | sounddevice + NumPy | 实时麦克风录音 |
 | 按键模拟 | evdev (uinput) / pynput | 内核级/X11 级键盘输入 |
 | 截图工具 | maim + xclip | 屏幕选区截图 |
+| OCR 引擎 | Tesseract + Google Translate | 屏幕文字识别 + 翻译 |
+
+---
+
+## 📝 更新日志
+
+### v2.0 (2026-04-02)
+- **三级输入策略** — IBus → 智能剪贴板 → pynput 递降，彻底解决微信/QQ/终端输入兼容问题
+- **可配置快捷键** — `.config.json` 中自定义 `hotkey_voice`、`hotkey_screenshot`、`hotkey_repeat`
+- **重复输入** — `Ctrl+Shift+Z` 一键重复上次识别结果
+- **截图延迟优化** — maim 进程主线程预启动，消除线程调度延迟
+- **录音提示音** — 开始(400Hz)/结束(700Hz) 低延迟正弦波提示
+- **悬浮状态栏优化** — 更大字体(14px)、更宽间距、更强可读性
+- **翻译浮窗焦点检测** — 点击浮窗外部自动关闭
+
+### v1.0 (2026-03-28)
+- 全局语音输入 (`Ctrl+``)
+- 截图翻译 (`Alt+X`)
+- Web 界面 + 零依赖轻量版
+- Whisper 语音识别 + Ollama 文本润色
+- 悬浮状态栏 + 连续录音队列
+- 一键启动脚本 + systemd 开机自启
 
 ---
 
