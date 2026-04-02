@@ -1,0 +1,11 @@
+__pycache__/
+.venv/
+.cache/
+.config.json
+*.pyc
+.env
+.ruff_cache/
+.ppdocs
+.ppdocs-index/
+.agents/
+.claude/

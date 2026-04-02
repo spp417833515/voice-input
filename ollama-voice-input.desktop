@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Ollama Voice Input
+Comment=全局语音输入 + 截图翻译
+Exec=bash -c 'cd /home/spp/桌面/ollama-voice-input && ./start.sh'
+Terminal=true
+Type=Application
+Icon=audio-input-microphone
+Categories=Utility;Audio;
+StartupNotify=false

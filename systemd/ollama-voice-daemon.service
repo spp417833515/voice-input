@@ -1,0 +1,15 @@
+[Unit]
+Description=Ollama Voice Input - 全局快捷键守护进程
+After=ollama-voice-server.service
+Requires=ollama-voice-server.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/spp/桌面/ollama-voice-input
+Environment=DISPLAY=:0
+ExecStart=/home/spp/桌面/ollama-voice-input/.venv/bin/python3 /home/spp/桌面/ollama-voice-input/daemon.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

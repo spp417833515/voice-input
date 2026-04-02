@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>环境配置 - Ollama Voice Input</title>
+    <style>
+      :root {
+        --bg: #f4efe7;
+        --panel: #fffaf3;
+        --ink: #172126;
+        --muted: #5f6b73;
+        --line: #d7cbbd;
+        --accent: #0f766e;
+        --accent-strong: #115e59;
+        --ok: #16a34a;
+        --warn: #d97706;
+        --err: #dc2626;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Noto Sans CJK SC", "PingFang SC", sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, #fff2cf 0, transparent 28%),
+          radial-gradient(circle at bottom right, #d7f4ef 0, transparent 32%),
+          var(--bg);
+      }
+      .wrap { max-width: 860px; margin: 0 auto; padding: 32px 20px 48px; }
+      .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+      h1 { margin: 0; font-size: 34px; }
+      .back-btn {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 8px 18px; border: 1px solid var(--line); border-radius: 14px;
+        background: white; color: var(--muted); font: inherit; font-size: 14px;
+        cursor: pointer; text-decoration: none; transition: border-color 120ms, color 120ms;
+      }
+      .back-btn:hover { border-color: var(--accent); color: var(--accent); }
+      .sub { margin: 0 0 24px; color: var(--muted); }
+      h2 { font-size: 17px; margin: 28px 0 12px; color: var(--ink); }
+      .panel {
+        background: var(--panel); border: 1px solid var(--line); border-radius: 20px;
+        padding: 20px 24px; box-shadow: 0 12px 40px rgba(23,33,38,0.06); margin-bottom: 16px;
+      }
+      .row {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 10px 0; border-bottom: 1px solid #f0ece4;
+      }
+      .row:last-child { border-bottom: none; }
+      .row-label { font-weight: 600; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+      .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+      .dot.ok { background: var(--ok); }
+      .dot.warn { background: var(--warn); }
+      .dot.err { background: var(--err); }
+      .row-value { color: var(--muted); font-size: 14px; }
+      .btn {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 7px 16px; border: none; border-radius: 10px;
+        font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+        transition: filter 120ms; color: white;
+        background: linear-gradient(145deg, var(--accent), var(--accent-strong));
+      }
+      .btn:hover { filter: brightness(1.08); }
+      .btn:disabled { opacity: 0.5; cursor: not-allowed; filter: none; }
+      .btn.sm { padding: 5px 12px; font-size: 12px; }
+      .btn.outline { background: white; color: var(--accent); border: 1px solid var(--line); }
+      .btn.danger { background: white; color: var(--err); border: 1px solid #fecaca; }
+      .btn.danger:hover { background: #fef2f2; }
+      .progress-wrap {
+        margin-top: 6px; height: 8px; border-radius: 4px; background: #e5e7eb; overflow: hidden; display: none;
+      }
+      .progress-bar {
+        height: 100%; border-radius: 4px; width: 0%;
+        background: linear-gradient(90deg, var(--accent), #22d3ee);
+        transition: width 200ms ease;
+      }
+      .progress-text { font-size: 12px; color: var(--accent-strong); margin-top: 4px; display: none; font-weight: 500; }
+      .tag { padding: 3px 10px; border-radius: 8px; background: #e8f5e9; color: #2e7d32; font-size: 12px; font-weight: 500; }
+      .btn.active-model { background: var(--ok); pointer-events: none; }
+      .pull-row { display: flex; gap: 10px; margin-top: 12px; }
+      .pull-row input {
+        flex: 1; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px;
+        font: inherit; font-size: 14px; background: white;
+      }
+      .log {
+        margin-top: 12px; padding: 12px 14px; border-radius: 12px;
+        background: #1e293b; color: #94a3b8; font-family: monospace; font-size: 13px;
+        max-height: 150px; overflow-y: auto; white-space: pre-wrap; display: none;
+      }
+      /* 模型卡片 */
+      .model-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+      .model-card {
+        background: white; border: 1px solid var(--line); border-radius: 14px;
+        padding: 14px 16px; display: flex; flex-direction: column; gap: 8px;
+        transition: border-color 120ms, background 120ms, opacity 120ms;
+        position: relative;
+      }
+      .model-card:hover { border-color: var(--accent); }
+      .model-card.is-active { border-color: var(--ok); border-width: 2px; background: #f0fdf4; }
+      .model-card.is-installed { border-color: #86efac; background: #fafff7; }
+      .model-card.not-installed { opacity: 0.7; background: #fafaf8; }
+      .model-card.not-installed:hover { opacity: 1; }
+      .mc-head { display: flex; align-items: center; justify-content: space-between; }
+      .mc-name { font-weight: 700; font-size: 15px; }
+      .mc-status {
+        display: inline-flex; align-items: center; gap: 4px;
+        font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 8px;
+      }
+      .mc-status.installed { background: #dcfce7; color: #166534; }
+      .mc-status.not-installed { background: #f3f4f6; color: #9ca3af; }
+      .mc-status .status-dot {
+        width: 7px; height: 7px; border-radius: 50%; display: inline-block;
+      }
+      .mc-status.installed .status-dot { background: #22c55e; }
+      .mc-status.not-installed .status-dot { background: #d1d5db; }
+      .mc-desc { color: var(--muted); font-size: 13px; line-height: 1.45; }
+      .mc-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+      .mc-actions { display: flex; gap: 6px; margin-top: auto; }
+      .spin {
+        display: inline-block; width: 12px; height: 12px;
+        border: 2px solid rgba(255,255,255,0.3); border-top-color: white;
+        border-radius: 50%; animation: spin 0.6s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      /* Tab 导航 */
+      .tab-bar {
+        display: flex;
+        gap: 6px;
+        padding: 4px;
+        background: rgba(255,255,255,0.6);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        margin-bottom: 24px;
+        backdrop-filter: blur(8px);
+      }
+      .tab-btn {
+        flex: 1;
+        padding: 10px 16px;
+        border: none;
+        border-radius: 12px;
+        background: transparent;
+        font: inherit;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--muted);
+        cursor: pointer;
+        transition: all 180ms ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+      }
+      .tab-btn:hover { background: rgba(15,118,110,0.06); color: var(--accent); }
+      .tab-btn.active {
+        background: white;
+        color: var(--accent);
+        box-shadow: 0 2px 8px rgba(15,118,110,0.12);
+      }
+      .tab-content { display: none; animation: tabFadeIn 250ms ease; }
+      .tab-content.active { display: block; }
+      @keyframes tabFadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="header">
+        <h1>环境配置</h1>
+        <a href="/" class="back-btn">← 返回主页</a>
+      </div>
+      <p class="sub">自动检测运行环境，一键安装模型，切换使用的模型。</p>
+
+      <!-- Tab 导航 -->
+      <div class="tab-bar">
+        <button class="tab-btn active" onclick="switchTab('models')" id="tab-models">🤖 模型管理</button>
+        <button class="tab-btn" onclick="switchTab('voice')" id="tab-voice">🎤 语音设置</button>
+        <button class="tab-btn" onclick="switchTab('tools')" id="tab-tools">🔧 系统工具</button>
+      </div>
+
+      <!-- Tab 1: 模型管理 -->
+      <div class="tab-content active" id="panel-models">
+        <!-- ========== Ollama 服务状态 ========== -->
+        <h2>Ollama 服务</h2>
+        <div class="panel">
+          <div class="row">
+            <span class="row-label"><span id="ollamaInstalledDot" class="dot err"></span> 安装状态</span>
+            <span id="ollamaInstalledVal" class="row-value">检测中…</span>
+          </div>
+          <div class="row">
+            <span class="row-label"><span id="ollamaRunningDot" class="dot err"></span> 运行状态</span>
+            <span id="ollamaRunningVal" class="row-value">检测中…</span>
+          </div>
+          <div class="row">
+            <span class="row-label">已安装模型</span>
+            <span id="ollamaModels" class="row-value">-</span>
+          </div>
+          <div style="margin-top: 10px; display: flex; gap: 10px;">
+            <button id="installOllamaBtn" class="btn sm outline" onclick="installOllama()" style="display:none">安装 Ollama</button>
+            <button id="startOllamaBtn" class="btn sm outline" onclick="startOllama()" style="display:none">启动 Ollama</button>
+          </div>
+        </div>
+
+        <!-- ========== 推荐文本模型 ========== -->
+        <h2>文本模型（语音润色 / 翻译）</h2>
+        <div id="textModels" class="model-grid"></div>
+
+        <!-- ========== 自定义拉取 ========== -->
+        <h2>自定义模型</h2>
+        <div class="panel">
+          <div class="pull-row">
+            <input id="pullModelInput" placeholder="输入模型名称，如 qwen2.5:14b" />
+            <button id="pullBtn" class="btn" onclick="pullModel()">拉取模型</button>
+          </div>
+          <div id="pullLog" class="log"></div>
+        </div>
+      </div>
+
+      <!-- Tab 2: 语音设置 -->
+      <div class="tab-content" id="panel-voice">
+        <!-- ========== Whisper ========== -->
+        <h2>Whisper 语音识别</h2>
+        <div class="panel">
+          <div class="row">
+            <span class="row-label"><span id="whisperDot" class="dot warn"></span> 模型</span>
+            <span id="whisperVal" class="row-value">检测中…</span>
+          </div>
+          <div class="row">
+            <span class="row-label">GPU 加速</span>
+            <span id="whisperDevice" class="row-value">-</span>
+          </div>
+          <div class="row">
+            <span class="row-label">说明</span>
+            <span class="row-value">首次转写时自动下载，无需手动操作</span>
+          </div>
+        </div>
+
+        <!-- ========== 纠错关键词 ========== -->
+        <h2>纠错关键词</h2>
+        <div class="panel">
+          <div class="row" style="flex-direction:column;align-items:stretch;gap:8px">
+            <span class="row-label">自定义专有名词</span>
+            <span style="color:var(--muted);font-size:13px">语音识别后，AI 润色时会优先将发音相近的错误纠正为这些词。用逗号、顿号或空格分隔。</span>
+          </div>
+          <div style="margin-top:8px;display:flex;flex-direction:column;gap:10px">
+            <textarea id="keywordsInput" rows="3" placeholder="例如：Ollama、FastAPI、Whisper、qwen&#10;每行或用逗号、顿号、空格分隔均可" style="width:100%;padding:12px 14px;border:1px solid var(--line);border-radius:12px;font:inherit;font-size:14px;background:white;resize:vertical;line-height:1.6"></textarea>
+            <div style="display:flex;justify-content:flex-end"><button class="btn" onclick="saveKeywords()">保存</button></div>
+          </div>
+          <div id="keywordsSaved" style="margin-top:8px;font-size:13px;color:var(--ok);display:none">已保存</div>
+        </div>
+      </div>
+
+      <!-- Tab 3: 系统工具 -->
+      <div class="tab-content" id="panel-tools">
+        <!-- ========== 系统工具 ========== -->
+        <h2>系统工具（全局快捷键需要）</h2>
+        <div class="panel">
+          <div class="row">
+            <span class="row-label"><span id="maimDot" class="dot err"></span> maim (截图)</span>
+            <span id="maimVal" class="row-value">检测中…</span>
+          </div>
+          <div class="row">
+            <span class="row-label"><span id="xclipDot" class="dot err"></span> xclip (剪贴板)</span>
+            <span id="xclipVal" class="row-value">检测中…</span>
+          </div>
+          <div class="row">
+            <span class="row-label">安装命令</span>
+            <span class="row-value" style="font-family:monospace;font-size:13px">sudo apt install maim xclip</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top: 20px; text-align: center;">
+        <button class="btn" onclick="runCheck()">🔄 重新检测</button>
+      </div>
+    </div>
+
+    <script>
+      // ========== 推荐模型定义 ==========
+      const TEXT_MODELS = [
+        { name: "qwen2.5:3b",  size: "2.0 GB", desc: "中文效果好，快速响应，推荐入门" },
+        { name: "qwen2.5:7b",  size: "4.7 GB", desc: "更精准的中文理解，适合高质量润色" },
+        { name: "qwen3:4b",    size: "2.6 GB", desc: "最新一代，推理能力强" },
+        { name: "gemma3:4b",   size: "3.0 GB", desc: "Google 开源，多语言均衡" },
+        { name: "llama3.1:8b", size: "4.9 GB", desc: "Meta 开源，英文特别强" },
+        { name: "qwen2.5:14b", size: "9.0 GB", desc: "大参数高精度，需要较多显存" },
+      ];
+
+      let installedModels = [];
+      let currentConfig = {};
+
+      function log(msg) {
+        const el = document.getElementById("pullLog");
+        el.style.display = "block";
+        el.textContent += msg + "\n";
+        el.scrollTop = el.scrollHeight;
+      }
+
+      function formatBytes(bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
+        if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + " MB";
+        return (bytes / 1073741824).toFixed(2) + " GB";
+      }
+
+      function isModelInstalled(modelName) {
+        // 精确匹配：qwen2.5:3b 必须完全匹配，不能让 qwen2.5:7b 也被认为已安装
+        return installedModels.includes(modelName);
+      }
+
+      function renderModelCards(models, containerId, configKey) {
+        const container = document.getElementById(containerId);
+        container.innerHTML = models.map((m) => {
+          const installed = isModelInstalled(m.name);
+          const isActive = currentConfig[configKey] === m.name;
+          const cardId = "card-" + m.name.replace(/[:.]/g, "-");
+          const cardClass = isActive ? "is-active" : (installed ? "is-installed" : "not-installed");
+          const statusClass = installed ? "installed" : "not-installed";
+          const statusText = installed ? "已安装" : "未安装";
+          return `
+            <div class="model-card ${cardClass}" id="${cardId}">
+              <div class="mc-head">
+                <span class="mc-name">${m.name}</span>
+                <span class="mc-status ${statusClass}"><span class="status-dot"></span>${statusText}</span>
+              </div>
+              <div class="mc-desc">${m.desc}</div>
+              <div class="mc-meta">
+                <span style="font-size:12px;color:var(--muted)">~${m.size}</span>
+                ${isActive ? '<span class="tag" style="background:#dcfce7;color:#166534">当前使用</span>' : ""}
+              </div>
+              <div class="progress-wrap" id="pw-${cardId}"><div class="progress-bar" id="pb-${cardId}"></div></div>
+              <div class="progress-text" id="pt-${cardId}"></div>
+              <div class="mc-actions">
+                ${!installed ? `<button class="btn sm" id="btn-${cardId}" onclick="pullAndSet('${m.name}','${configKey}','${cardId}')">安装并使用</button>` : ""}
+                ${installed && !isActive ? `<button class="btn sm" onclick="setModel('${m.name}','${configKey}')">切换使用</button>` : ""}
+                ${isActive ? '<button class="btn sm active-model">使用中 ✓</button>' : ""}
+                ${installed && !isActive ? `<button class="btn sm danger" onclick="deleteModel('${m.name}')">删除</button>` : ""}
+              </div>
+            </div>`;
+        }).join("");
+      }
+
+      async function runCheck() {
+        try {
+          const resp = await fetch("/api/setup/check");
+          const d = await resp.json();
+          installedModels = d.ollama_models || [];
+          currentConfig = d.config || {};
+
+          // Ollama status
+          const oi = d.ollama.installed, or_ = d.ollama.running;
+          document.getElementById("ollamaInstalledDot").className = "dot " + (oi ? "ok" : "err");
+          document.getElementById("ollamaInstalledVal").textContent = oi ? (d.ollama.version || "已安装") : "未安装";
+          document.getElementById("ollamaRunningDot").className = "dot " + (or_ ? "ok" : "err");
+          document.getElementById("ollamaRunningVal").textContent = or_ ? "运行中" : "未运行";
+          document.getElementById("installOllamaBtn").style.display = oi ? "none" : "";
+          document.getElementById("startOllamaBtn").style.display = (oi && !or_) ? "" : "none";
+
+          // Installed models tags
+          const modelsEl = document.getElementById("ollamaModels");
+          modelsEl.innerHTML = installedModels.length
+            ? installedModels.map((m) => `<span class="tag">${m}</span>`).join(" ")
+            : (or_ ? "无模型" : "-");
+
+          // Model cards
+          renderModelCards(TEXT_MODELS, "textModels", "ollama_model");
+
+          // Whisper
+          document.getElementById("whisperDot").className = "dot " + (d.whisper.downloaded ? "ok" : "warn");
+          document.getElementById("whisperVal").textContent =
+            d.whisper.model + (d.whisper.downloaded ? " (已下载)" : " (首次使用时下载)");
+          document.getElementById("whisperDevice").textContent = d.config.whisper_device;
+
+          // System tools
+          for (const [tool, ok] of Object.entries(d.system_tools)) {
+            const dotId = tool.replace(/-/g, "") + "Dot";
+            const valId = tool.replace(/-/g, "") + "Val";
+            const dotEl = document.getElementById(dotId);
+            const valEl = document.getElementById(valId);
+            if (dotEl) dotEl.className = "dot " + (ok ? "ok" : "err");
+            if (valEl) valEl.textContent = ok ? "已安装" : "未安装";
+          }
+
+          // Keywords
+          const statusResp = await fetch("/api/status");
+          const statusData = await statusResp.json();
+          const kw = statusData.custom_keywords || [];
+          document.getElementById("keywordsInput").value = kw.join("、");
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      async function pullModelStream(model, cardId) {
+        const pw = cardId ? document.getElementById("pw-" + cardId) : null;
+        const pb = cardId ? document.getElementById("pb-" + cardId) : null;
+        const pt = cardId ? document.getElementById("pt-" + cardId) : null;
+
+        if (pw) pw.style.display = "block";
+        if (pt) { pt.style.display = "block"; pt.textContent = "准备中…"; }
+
+        log(`正在拉取 ${model}…`);
+        try {
+          const resp = await fetch("/api/setup/pull_model", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: "model=" + encodeURIComponent(model),
+          });
+
+          const reader = resp.body.getReader();
+          const decoder = new TextDecoder();
+          let buf = "";
+          let ok = false;
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            const lines = buf.split("\n");
+            buf = lines.pop();
+
+            for (const raw of lines) {
+              if (!raw.startsWith("data: ")) continue;
+              try {
+                const d = JSON.parse(raw.slice(6));
+                if (d.error) {
+                  log("❌ " + d.error);
+                  return false;
+                }
+                if (d.status === "done") {
+                  ok = true;
+                } else if (d.status && d.total && d.completed !== undefined) {
+                  const pct = Math.min(100, Math.round((d.completed / d.total) * 100));
+                  if (pb) pb.style.width = pct + "%";
+                  if (pt) pt.textContent = `${d.status.slice(0,20)}… ${formatBytes(d.completed)} / ${formatBytes(d.total)} (${pct}%)`;
+                } else if (d.status) {
+                  if (pt) pt.textContent = d.status;
+                  log(d.status);
+                }
+              } catch {}
+            }
+          }
+
+          if (ok) {
+            log(`✅ ${model} 拉取成功`);
+            if (pb) pb.style.width = "100%";
+            if (pt) pt.textContent = "下载完成";
+          }
+          return ok;
+        } catch (e) {
+          log(`❌ 网络错误: ${e.message}`);
+          return false;
+        } finally {
+          setTimeout(() => {
+            if (pw) pw.style.display = "none";
+            if (pt) pt.style.display = "none";
+          }, 2000);
+        }
+      }
+
+      async function pullModel(modelName) {
+        const input = document.getElementById("pullModelInput");
+        const btn = document.getElementById("pullBtn");
+        const model = modelName || input.value.trim();
+        if (!model) return;
+
+        if (!modelName) {
+          btn.disabled = true;
+          btn.innerHTML = '<span class="spin"></span> 拉取中';
+        }
+
+        const ok = await pullModelStream(model, null);
+
+        if (!modelName) {
+          btn.disabled = false;
+          btn.textContent = "拉取模型";
+        }
+        await runCheck();
+        return ok;
+      }
+
+      async function setModel(name, configKey) {
+        const body = new URLSearchParams();
+        body.set(configKey, name);
+        try {
+          const resp = await fetch("/api/setup/set_config", { method: "POST", body });
+          const d = await resp.json();
+          if (d.ok) log(`✅ 已切换 ${configKey} → ${name}`);
+        } catch (e) {
+          log(`❌ 切换失败: ${e.message}`);
+        }
+        await runCheck();
+      }
+
+      async function pullAndSet(name, configKey, cardId) {
+        const btn = document.getElementById("btn-" + cardId);
+        if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> 下载中'; }
+
+        const ok = await pullModelStream(name, cardId);
+        if (ok) await setModel(name, configKey);
+        else await runCheck();
+      }
+
+      async function deleteModel(name) {
+        if (!confirm(`确定要删除模型 ${name} 吗？删除后需要重新下载。`)) return;
+        log(`正在删除 ${name}…`);
+        try {
+          const resp = await fetch("/api/setup/delete_model", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: "model=" + encodeURIComponent(name),
+          });
+          const d = await resp.json();
+          if (resp.ok) {
+            log(`✅ ${name} 已删除`);
+          } else {
+            log(`❌ 删除失败: ${d.detail || JSON.stringify(d)}`);
+          }
+        } catch (e) {
+          log(`❌ 删除失败: ${e.message}`);
+        }
+        await runCheck();
+      }
+
+      async function installOllama() {
+        const btn = document.getElementById("installOllamaBtn");
+        btn.disabled = true; btn.innerHTML = '<span class="spin"></span> 安装中';
+        log("正在安装 Ollama...");
+        try {
+          const resp = await fetch("/api/setup/install_ollama", { method: "POST" });
+          const d = await resp.json();
+          log(d.ok ? "✅ " + d.message : "❌ " + d.message);
+        } catch (e) { log("❌ " + e.message); }
+        finally { btn.disabled = false; btn.textContent = "安装 Ollama"; await runCheck(); }
+      }
+
+      async function startOllama() {
+        const btn = document.getElementById("startOllamaBtn");
+        btn.disabled = true; btn.innerHTML = '<span class="spin"></span> 启动中';
+        log("正在启动 Ollama...");
+        try {
+          const resp = await fetch("/api/setup/start_ollama", { method: "POST" });
+          const d = await resp.json();
+          log(d.ok ? "✅ Ollama 已启动" : "❌ 启动失败");
+        } catch (e) { log("❌ " + e.message); }
+        finally { btn.disabled = false; btn.textContent = "启动 Ollama"; await runCheck(); }
+      }
+
+      async function saveKeywords() {
+        const input = document.getElementById("keywordsInput");
+        const body = new URLSearchParams();
+        body.set("custom_keywords", input.value);
+        try {
+          const resp = await fetch("/api/setup/set_config", { method: "POST", body });
+          const d = await resp.json();
+          if (d.ok) {
+            const el = document.getElementById("keywordsSaved");
+            el.style.display = "block";
+            el.textContent = "已保存";
+            el.style.color = "var(--ok)";
+            setTimeout(() => { el.style.display = "none"; }, 2000);
+          }
+        } catch (e) {
+          const el = document.getElementById("keywordsSaved");
+          el.style.display = "block";
+          el.style.color = "var(--err)";
+          el.textContent = "保存失败: " + e.message;
+        }
+      }
+
+      function switchTab(tab) {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(p => p.classList.remove('active'));
+        document.getElementById('tab-' + tab).classList.add('active');
+        document.getElementById('panel-' + tab).classList.add('active');
+      }
+
+      runCheck();
+    </script>
+  </body>
+</html>

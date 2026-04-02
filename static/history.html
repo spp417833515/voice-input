@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>转写历史 - Ollama Voice Input</title>
+    <style>
+      :root {
+        --bg: #f4efe7;
+        --panel: #fffaf3;
+        --ink: #172126;
+        --muted: #5f6b73;
+        --line: #d7cbbd;
+        --accent: #0f766e;
+        --accent-strong: #115e59;
+        --ok: #16a34a;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Noto Sans CJK SC", "PingFang SC", sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, #fff2cf 0, transparent 28%),
+          radial-gradient(circle at bottom right, #d7f4ef 0, transparent 32%),
+          var(--bg);
+      }
+      .wrap { max-width: 860px; margin: 0 auto; padding: 32px 20px 48px; }
+      .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+      h1 { margin: 0; font-size: 34px; }
+      .back-btn {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 8px 18px; border: 1px solid var(--line); border-radius: 14px;
+        background: white; color: var(--muted); font: inherit; font-size: 14px;
+        cursor: pointer; text-decoration: none; transition: border-color 120ms, color 120ms;
+      }
+      .back-btn:hover { border-color: var(--accent); color: var(--accent); }
+      .sub { margin: 0 0 24px; color: var(--muted); }
+      .stats {
+        display: flex; gap: 16px; margin-bottom: 20px;
+        font-size: 14px; color: var(--muted);
+      }
+      .stats span { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 6px 14px; }
+
+      /* 记录卡片 */
+      .record {
+        background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+        padding: 18px 22px; margin-bottom: 12px;
+        box-shadow: 0 8px 30px rgba(23,33,38,0.05);
+        transition: border-color 120ms;
+      }
+      .record:hover { border-color: var(--accent); }
+      .record-head {
+        display: flex; align-items: center; justify-content: space-between;
+        margin-bottom: 10px;
+      }
+      .record-time {
+        font-size: 13px; color: var(--muted); font-weight: 500;
+      }
+      .record-mode {
+        font-size: 11px; font-weight: 600; padding: 2px 10px;
+        border-radius: 6px; background: #e0f2fe; color: #0369a1;
+      }
+      .record-mode.raw { background: #f3f4f6; color: #6b7280; }
+      .record-mode.translate_en { background: #fef3c7; color: #92400e; }
+      .record-row { margin-bottom: 8px; }
+      .record-label {
+        font-size: 12px; font-weight: 600; color: var(--muted);
+        margin-bottom: 2px;
+      }
+      .record-text {
+        font-size: 15px; line-height: 1.6;
+        padding: 8px 12px; border-radius: 10px;
+        background: rgba(0,0,0,0.025);
+        word-break: break-all;
+      }
+      .record-text.final {
+        background: rgba(15, 118, 110, 0.06);
+        border-left: 3px solid var(--accent);
+      }
+      .record-actions { display: flex; gap: 8px; margin-top: 8px; }
+      .copy-btn {
+        display: inline-flex; align-items: center; gap: 4px;
+        padding: 5px 14px; border: 1px solid var(--line); border-radius: 8px;
+        background: white; color: var(--accent); font: inherit; font-size: 12px;
+        font-weight: 600; cursor: pointer; transition: all 120ms;
+      }
+      .copy-btn:hover { background: var(--accent); color: white; border-color: var(--accent); }
+      .copy-btn.copied { background: var(--ok); color: white; border-color: var(--ok); pointer-events: none; }
+
+      .empty {
+        text-align: center; padding: 60px 20px; color: var(--muted);
+        font-size: 16px;
+      }
+      .load-more {
+        display: block; width: 100%; padding: 12px;
+        border: 1px solid var(--line); border-radius: 14px;
+        background: white; color: var(--accent); font: inherit; font-size: 14px;
+        font-weight: 600; cursor: pointer; text-align: center;
+        transition: all 120ms; margin-top: 8px;
+      }
+      .load-more:hover { background: var(--accent); color: white; }
+      .load-more:disabled { opacity: 0.5; cursor: not-allowed; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="header">
+        <h1>转写历史</h1>
+        <a href="/" class="back-btn">&larr; 返回主页</a>
+      </div>
+      <p class="sub">查看所有语音转写记录，点击复制结果文本。</p>
+
+      <div class="stats">
+        <span id="totalCount">加载中...</span>
+      </div>
+
+      <div id="records"></div>
+      <button id="loadMoreBtn" class="load-more" onclick="loadMore()" style="display:none">加载更多</button>
+    </div>
+
+    <script>
+      let allLoaded = [];
+      let offset = 0;
+      const limit = 30;
+
+      function escapeHtml(s) {
+        const d = document.createElement("div");
+        d.textContent = s;
+        return d.innerHTML;
+      }
+
+      function modeLabel(mode) {
+        const map = { polish: "润色", raw: "原始", translate_en: "译英" };
+        return map[mode] || mode;
+      }
+
+      function formatTime(iso) {
+        try {
+          const d = new Date(iso);
+          const pad = n => String(n).padStart(2, "0");
+          return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        } catch { return iso; }
+      }
+
+      function copyText(text, btnEl) {
+        navigator.clipboard.writeText(text).then(() => {
+          btnEl.className = "copy-btn copied";
+          btnEl.textContent = "已复制 \u2713";
+          setTimeout(() => {
+            btnEl.className = "copy-btn";
+            btnEl.textContent = "\ud83d\udccb 复制";
+          }, 1500);
+        });
+      }
+
+      function renderRecords(records, append) {
+        const container = document.getElementById("records");
+        if (!append) container.innerHTML = "";
+
+        if (records.length === 0 && !append) {
+          container.innerHTML = '<div class="empty">暂无转写记录<br><br>使用 Ctrl+` 语音输入后，记录会自动保存在这里。</div>';
+          return;
+        }
+
+        records.forEach((r, i) => {
+          const idx = offset - limit + i;
+          const modeClass = r.mode === "raw" ? "raw" : (r.mode === "translate_en" ? "translate_en" : "");
+          const showRaw = r.mode !== "raw" && r.raw_text !== r.final_text;
+
+          let html = `
+            <div class="record">
+              <div class="record-head">
+                <span class="record-time">${formatTime(r.timestamp)}</span>
+                <span class="record-mode ${modeClass}">${modeLabel(r.mode)}</span>
+              </div>`;
+
+          if (showRaw) {
+            html += `
+              <div class="record-row">
+                <div class="record-label">原始识别</div>
+                <div class="record-text">${escapeHtml(r.raw_text)}</div>
+              </div>`;
+          }
+
+          html += `
+              <div class="record-row">
+                <div class="record-label">${showRaw ? "润色结果" : "识别结果"}</div>
+                <div class="record-text final">${escapeHtml(r.final_text)}</div>
+              </div>
+              <div class="record-actions">
+                <button class="copy-btn" onclick="copyText(${JSON.stringify(r.final_text).replace(/"/g, '&quot;')}, this)">\ud83d\udccb 复制</button>
+              </div>
+            </div>`;
+
+          container.insertAdjacentHTML("beforeend", html);
+        });
+      }
+
+      async function loadRecords(append) {
+        try {
+          const resp = await fetch(`/api/history?limit=${limit}&offset=${offset}`);
+          const data = await resp.json();
+
+          document.getElementById("totalCount").textContent = `共 ${data.total} 条记录`;
+
+          renderRecords(data.records, append);
+          offset += data.records.length;
+
+          const btn = document.getElementById("loadMoreBtn");
+          if (offset < data.total) {
+            btn.style.display = "block";
+            btn.textContent = `加载更多 (${offset}/${data.total})`;
+          } else {
+            btn.style.display = "none";
+          }
+        } catch (e) {
+          console.error(e);
+          document.getElementById("totalCount").textContent = "加载失败";
+        }
+      }
+
+      function loadMore() {
+        const btn = document.getElementById("loadMoreBtn");
+        btn.disabled = true;
+        btn.textContent = "加载中...";
+        loadRecords(true).then(() => { btn.disabled = false; });
+      }
+
+      loadRecords(false);
+    </script>
+  </body>
+</html>
