@@ -52,9 +52,11 @@ CONFIG_PATH = BASE_DIR / ".config.json"
 API_BASE = os.getenv("API_BASE", "http://127.0.0.1:17945")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
-VOICE_MODE = os.getenv("VOICE_MODE", "polish")
 WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "zh")
 SAMPLE_RATE = 16000
+
+# 截图翻译目标语言（可通过 .config.json 自定义）
+TRANSLATE_TARGET_LANG = "zh"
 
 # 快捷键配置（可通过 .config.json 自定义）
 HOTKEY_VOICE = "ctrl+grave"
@@ -66,21 +68,21 @@ def load_config() -> None:
     """从 .config.json 加载持久化配置，覆盖环境变量默认值。"""
     global \
         OLLAMA_MODEL, \
-        VOICE_MODE, \
         WHISPER_LANGUAGE, \
         HOTKEY_VOICE, \
         HOTKEY_SCREENSHOT, \
-        HOTKEY_REPEAT
+        HOTKEY_REPEAT, \
+        TRANSLATE_TARGET_LANG
     if not CONFIG_PATH.exists():
         return
     try:
         cfg = json.loads(CONFIG_PATH.read_text())
         OLLAMA_MODEL = cfg.get("ollama_model", OLLAMA_MODEL)
-        VOICE_MODE = cfg.get("voice_mode", VOICE_MODE)
         WHISPER_LANGUAGE = cfg.get("whisper_language", WHISPER_LANGUAGE)
         HOTKEY_VOICE = cfg.get("hotkey_voice", HOTKEY_VOICE)
         HOTKEY_SCREENSHOT = cfg.get("hotkey_screenshot", HOTKEY_SCREENSHOT)
         HOTKEY_REPEAT = cfg.get("hotkey_repeat", HOTKEY_REPEAT)
+        TRANSLATE_TARGET_LANG = cfg.get("translate_target_lang", TRANSLATE_TARGET_LANG)
     except Exception:
         pass
 
@@ -89,11 +91,11 @@ def save_config() -> None:
     """将当前配置写入 .config.json。"""
     cfg = {
         "ollama_model": OLLAMA_MODEL,
-        "voice_mode": VOICE_MODE,
         "whisper_language": WHISPER_LANGUAGE,
         "hotkey_voice": HOTKEY_VOICE,
         "hotkey_screenshot": HOTKEY_SCREENSHOT,
         "hotkey_repeat": HOTKEY_REPEAT,
+        "translate_target_lang": TRANSLATE_TARGET_LANG,
     }
     try:
         CONFIG_PATH.write_text(json.dumps(cfg, ensure_ascii=False, indent=2))
@@ -172,7 +174,7 @@ def _request_regrab() -> bool:
     """在主线程中刷新快捷键抓取，防止合成按键导致 XGrabKey 失效。"""
     if _hotkey_grabber and not _hotkey_grabber.voice_active:
         try:
-            _hotkey_grabber.ungrab()
+            # 不做 ungrab，直接 grab 覆盖，避免热键注册空白期
             _hotkey_grabber.grab()
         except Exception:
             pass
@@ -757,10 +759,6 @@ class TranslationOverlay(Gtk.Window):
 
         self._box.pack_start(bottom, False, False, 0)
 
-        # 点击空白关闭（Button 消费事件不会冒泡）
-        self._ebox.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
-        self._ebox.connect("button-press-event", lambda *_: self.destroy())
-
         self.show_all()
 
         # 调整尺寸：保持宽度不小于选区，高度自适应
@@ -912,7 +910,7 @@ class VoiceRecorder:
 
             with open(tmp_path, "rb") as f:
                 files = {"audio": ("recording.wav", f, "audio/wav")}
-                data = {"mode": VOICE_MODE, "language": WHISPER_LANGUAGE}
+                data = {"mode": "raw", "language": WHISPER_LANGUAGE}
                 resp = httpx.post(
                     f"{API_BASE}/api/transcribe",
                     files=files,
@@ -929,6 +927,9 @@ class VoiceRecorder:
             result = resp.json()
             final = result.get("final_text", "")
             if final:
+                # 末尾自动加句号
+                if final[-1] not in "。！？.!?…；;:：,，、":
+                    final += "。"
                 global _last_result
                 _last_result = final
                 old_clipboard = _get_clipboard_text()
@@ -1027,7 +1028,7 @@ def _do_screenshot_translate(proc: subprocess.Popen, tmp_path: str) -> None:
             resp = httpx.post(
                 f"{API_BASE}/api/ocr_translate",
                 files={"image": ("crop.png", f, "image/png")},
-                data={"target_lang": "zh"},
+                data={"target_lang": TRANSLATE_TARGET_LANG},
                 timeout=120,
             )
 
@@ -1152,8 +1153,7 @@ class HotkeyGrabber:
     def _refresh_grab(self) -> bool:
         if not self.voice_active:
             try:
-                self.ungrab()
-                self.grab()
+                self.grab()  # XGrabKey 对同一客户端幂等，不做 ungrab 避免注册空白
             except Exception:
                 pass
         return True
@@ -1298,7 +1298,7 @@ def main() -> None:
 
     print("Ollama Voice Input 守护进程已启动")
     print(
-        f"  语音输入: {_format_hotkey(HOTKEY_VOICE)}  按住说话，松开自动粘贴 (模式={VOICE_MODE})"
+        f"  语音输入: {_format_hotkey(HOTKEY_VOICE)}  按住说话，松开自动粘贴"
     )
     print(f"  截图翻译: {_format_hotkey(HOTKEY_SCREENSHOT)}   框选截图，OCR+翻译")
     print(f"  重复输入: {_format_hotkey(HOTKEY_REPEAT)}  重复上一次识别结果")

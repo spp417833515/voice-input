@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>环境配置 - Ollama Voice Input</title>
+    <title>语音输入设置 - Ollama Voice Input</title>
     <style>
       :root {
         --bg: #f4efe7;
@@ -78,6 +78,7 @@
       .progress-text { font-size: 12px; color: var(--accent-strong); margin-top: 4px; display: none; font-weight: 500; }
       .tag { padding: 3px 10px; border-radius: 8px; background: #e8f5e9; color: #2e7d32; font-size: 12px; font-weight: 500; }
       .btn.active-model { background: var(--ok); pointer-events: none; }
+      .mode-btn { padding: 12px 10px; text-align: center; line-height: 1.5; }
       .pull-row { display: flex; gap: 10px; margin-top: 12px; }
       .pull-row input {
         flex: 1; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px;
@@ -165,63 +166,34 @@
   <body>
     <div class="wrap">
       <div class="header">
-        <h1>环境配置</h1>
-        <a href="/" class="back-btn">← 返回主页</a>
+        <h1>语音输入设置</h1>
       </div>
-      <p class="sub">自动检测运行环境，一键安装模型，切换使用的模型。</p>
+      <p class="sub">管理语音识别模型、快捷键和系统工具。</p>
 
       <!-- Tab 导航 -->
       <div class="tab-bar">
-        <button class="tab-btn active" onclick="switchTab('models')" id="tab-models">🤖 模型管理</button>
-        <button class="tab-btn" onclick="switchTab('voice')" id="tab-voice">🎤 语音设置</button>
+        <button class="tab-btn active" onclick="switchTab('voice')" id="tab-voice">🎤 语音设置</button>
         <button class="tab-btn" onclick="switchTab('tools')" id="tab-tools">🔧 系统工具</button>
       </div>
 
-      <!-- Tab 1: 模型管理 -->
-      <div class="tab-content active" id="panel-models">
-        <!-- ========== Ollama 服务状态 ========== -->
-        <h2>Ollama 服务</h2>
-        <div class="panel">
-          <div class="row">
-            <span class="row-label"><span id="ollamaInstalledDot" class="dot err"></span> 安装状态</span>
-            <span id="ollamaInstalledVal" class="row-value">检测中…</span>
-          </div>
-          <div class="row">
-            <span class="row-label"><span id="ollamaRunningDot" class="dot err"></span> 运行状态</span>
-            <span id="ollamaRunningVal" class="row-value">检测中…</span>
-          </div>
-          <div class="row">
-            <span class="row-label">已安装模型</span>
-            <span id="ollamaModels" class="row-value">-</span>
-          </div>
-          <div style="margin-top: 10px; display: flex; gap: 10px;">
-            <button id="installOllamaBtn" class="btn sm outline" onclick="installOllama()" style="display:none">安装 Ollama</button>
-            <button id="startOllamaBtn" class="btn sm outline" onclick="startOllama()" style="display:none">启动 Ollama</button>
-          </div>
-        </div>
-
-        <!-- ========== 推荐文本模型 ========== -->
-        <h2>文本模型（语音润色 / 翻译）</h2>
-        <div id="textModels" class="model-grid"></div>
-
-        <!-- ========== 自定义拉取 ========== -->
-        <h2>自定义模型</h2>
-        <div class="panel">
-          <div class="pull-row">
-            <input id="pullModelInput" placeholder="输入模型名称，如 qwen2.5:14b" />
-            <button id="pullBtn" class="btn" onclick="pullModel()">拉取模型</button>
-          </div>
-          <div id="pullLog" class="log"></div>
-        </div>
+      <!-- 隐藏元素（JS 需要引用） -->
+      <div style="display:none">
+        <span id="ollamaInstalledDot"></span><span id="ollamaInstalledVal"></span>
+        <span id="ollamaRunningDot"></span><span id="ollamaRunningVal"></span>
+        <span id="ollamaModels"></span>
+        <button id="installOllamaBtn"></button>
+        <button id="startOllamaBtn"></button>
+        <div id="textModels"></div>
+        <div id="pullLog"></div>
       </div>
 
-      <!-- Tab 2: 语音设置 -->
-      <div class="tab-content" id="panel-voice">
+      <!-- Tab 1: 语音设置 -->
+      <div class="tab-content active" id="panel-voice">
         <!-- ========== Whisper ========== -->
-        <h2>Whisper 语音识别</h2>
-        <div class="panel">
+        <h2>Whisper 语音识别模型</h2>
+        <div class="panel" style="margin-bottom:12px">
           <div class="row">
-            <span class="row-label"><span id="whisperDot" class="dot warn"></span> 模型</span>
+            <span class="row-label"><span id="whisperDot" class="dot warn"></span> 当前模型</span>
             <span id="whisperVal" class="row-value">检测中…</span>
           </div>
           <div class="row">
@@ -230,22 +202,68 @@
           </div>
           <div class="row">
             <span class="row-label">说明</span>
-            <span class="row-value">首次转写时自动下载，无需手动操作</span>
+            <span class="row-value">点击"下载并使用"可立即下载模型</span>
           </div>
         </div>
+        <div id="whisperModels" class="model-grid"></div>
+        <div id="whisperLog" class="log"></div>
 
         <!-- ========== 纠错关键词 ========== -->
-        <h2>纠错关键词</h2>
+        <h2>识别关键词</h2>
         <div class="panel">
           <div class="row" style="flex-direction:column;align-items:stretch;gap:8px">
             <span class="row-label">自定义专有名词</span>
-            <span style="color:var(--muted);font-size:13px">语音识别后，AI 润色时会优先将发音相近的错误纠正为这些词。用逗号、顿号或空格分隔。</span>
+            <span style="color:var(--muted);font-size:13px">帮助 Whisper 更准确地识别专有名词（如技术术语、产品名称）。用逗号、顿号或空格分隔。</span>
           </div>
           <div style="margin-top:8px;display:flex;flex-direction:column;gap:10px">
             <textarea id="keywordsInput" rows="3" placeholder="例如：Ollama、FastAPI、Whisper、qwen&#10;每行或用逗号、顿号、空格分隔均可" style="width:100%;padding:12px 14px;border:1px solid var(--line);border-radius:12px;font:inherit;font-size:14px;background:white;resize:vertical;line-height:1.6"></textarea>
             <div style="display:flex;justify-content:flex-end"><button class="btn" onclick="saveKeywords()">保存</button></div>
           </div>
           <div id="keywordsSaved" style="margin-top:8px;font-size:13px;color:var(--ok);display:none">已保存</div>
+        </div>
+
+        <!-- ========== 快捷键设置 ========== -->
+        <h2>快捷键设置</h2>
+        <div class="panel">
+          <div class="row" style="flex-direction:column;align-items:stretch;gap:4px;border-bottom:1px solid #f0ece4;padding-bottom:12px">
+            <span style="color:var(--muted);font-size:13px">修改快捷键后需重启服务才能生效。格式示例：ctrl+grave、alt+x、ctrl+shift+z</span>
+          </div>
+          <div class="row" style="padding:12px 0">
+            <span class="row-label">语音输入</span>
+            <input id="hotkeyVoice" style="width:180px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;font:inherit;font-size:14px;background:white;text-align:center" />
+          </div>
+          <div class="row" style="padding:12px 0">
+            <span class="row-label">截图翻译</span>
+            <input id="hotkeyScreenshot" style="width:180px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;font:inherit;font-size:14px;background:white;text-align:center" />
+          </div>
+          <div class="row" style="padding:12px 0">
+            <span class="row-label">重复上次输入</span>
+            <input id="hotkeyRepeat" style="width:180px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;font:inherit;font-size:14px;background:white;text-align:center" />
+          </div>
+          <div style="display:flex;justify-content:flex-end;margin-top:8px">
+            <button class="btn" onclick="saveHotkeys()">保存快捷键</button>
+          </div>
+          <div id="hotkeysSaved" style="margin-top:8px;font-size:13px;color:var(--ok);display:none"></div>
+        </div>
+
+        <!-- ========== 截图翻译设置 ========== -->
+        <h2>截图翻译设置</h2>
+        <div class="panel">
+          <div class="row" style="flex-direction:column;align-items:stretch;gap:8px">
+            <span class="row-label">翻译方式</span>
+            <span style="color:var(--muted);font-size:13px">截图翻译使用 tesseract OCR 识别文字 + Google Translate 翻译。需要网络连接。</span>
+          </div>
+          <div class="row" style="padding:12px 0">
+            <span class="row-label">目标语言</span>
+            <select id="translateTargetLang" onchange="saveTranslateLang()" style="padding:8px 12px;border:1px solid var(--line);border-radius:10px;font:inherit;font-size:14px;background:white">
+              <option value="zh">中文</option>
+              <option value="en">英文</option>
+              <option value="ja">日文</option>
+              <option value="ko">韩文</option>
+              <option value="raw">仅 OCR（不翻译）</option>
+            </select>
+          </div>
+          <div id="translateSaved" style="margin-top:8px;font-size:13px;color:var(--ok);display:none"></div>
         </div>
       </div>
 
@@ -277,15 +295,25 @@
     <script>
       // ========== 推荐模型定义 ==========
       const TEXT_MODELS = [
-        { name: "qwen2.5:3b",  size: "2.0 GB", desc: "中文效果好，快速响应，推荐入门" },
-        { name: "qwen2.5:7b",  size: "4.7 GB", desc: "更精准的中文理解，适合高质量润色" },
+        { name: "qwen2.5:3b",  size: "2.0 GB", desc: "轻量快速，适合简单翻译" },
+        { name: "qwen2.5:7b",  size: "4.7 GB", desc: "翻译质量好，推荐使用" },
         { name: "qwen3:4b",    size: "2.6 GB", desc: "最新一代，推理能力强" },
         { name: "gemma3:4b",   size: "3.0 GB", desc: "Google 开源，多语言均衡" },
-        { name: "llama3.1:8b", size: "4.9 GB", desc: "Meta 开源，英文特别强" },
+        { name: "llama3.1:8b", size: "4.9 GB", desc: "Meta 开源，英文翻译特别强" },
         { name: "qwen2.5:14b", size: "9.0 GB", desc: "大参数高精度，需要较多显存" },
       ];
 
+      const WHISPER_MODELS = [
+        { name: "tiny",    size: "~75 MB",  desc: "最小最快，准确率较低，仅适合测试" },
+        { name: "base",    size: "~140 MB", desc: "轻量模型，适合英文简单场景" },
+        { name: "small",   size: "~460 MB", desc: "平衡之选，对中文有基本支持" },
+        { name: "medium",  size: "~1.5 GB", desc: "中文识别较好，速度适中" },
+        { name: "large-v3-turbo", size: "~1.6 GB", desc: "推荐！接近最高准确率，速度快" },
+        { name: "large-v3", size: "~3.1 GB", desc: "最高准确率，需要较多显存/内存" },
+      ];
+
       let installedModels = [];
+      let downloadedWhisper = [];
       let currentConfig = {};
 
       function log(msg) {
@@ -339,11 +367,83 @@
         }).join("");
       }
 
+      function renderWhisperCards() {
+        const container = document.getElementById("whisperModels");
+        container.innerHTML = WHISPER_MODELS.map((m) => {
+          const installed = downloadedWhisper.includes(m.name);
+          const isActive = currentConfig.whisper_model === m.name;
+          const cardId = "wcard-" + m.name.replace(/[:.]/g, "-");
+          const cardClass = isActive ? "is-active" : (installed ? "is-installed" : "not-installed");
+          const statusClass = installed ? "installed" : "not-installed";
+          const statusText = installed ? "已下载" : "未下载";
+          return `
+            <div class="model-card ${cardClass}" id="${cardId}">
+              <div class="mc-head">
+                <span class="mc-name">${m.name}</span>
+                <span class="mc-status ${statusClass}"><span class="status-dot"></span>${statusText}</span>
+              </div>
+              <div class="mc-desc">${m.desc}</div>
+              <div class="mc-meta">
+                <span style="font-size:12px;color:var(--muted)">${m.size}</span>
+                ${isActive ? '<span class="tag" style="background:#dcfce7;color:#166534">当前使用</span>' : ""}
+              </div>
+              <div class="mc-actions">
+                ${!installed && !isActive ? `<button class="btn sm" id="btn-${cardId}" onclick="downloadAndSetWhisper('${m.name}','${cardId}')">下载并使用</button>` : ""}
+                ${installed && !isActive ? `<button class="btn sm" onclick="setWhisperModel('${m.name}')">切换使用</button>` : ""}
+                ${isActive && !installed ? `<button class="btn sm" id="btn-${cardId}" onclick="downloadAndSetWhisper('${m.name}','${cardId}')">立即下载</button>` : ""}
+                ${isActive && installed ? '<button class="btn sm active-model">使用中 ✓</button>' : ""}
+              </div>
+            </div>`;
+        }).join("");
+      }
+
+      async function setWhisperModel(name) {
+        const body = new URLSearchParams();
+        body.set("whisper_model", name);
+        try {
+          const resp = await fetch("/api/setup/set_config", { method: "POST", body });
+          const d = await resp.json();
+          if (d.ok) wlog(`✅ Whisper 模型已切换为 ${name}`);
+        } catch (e) {
+          wlog(`❌ 切换失败: ${e.message}`);
+        }
+        await runCheck();
+      }
+
+      async function downloadAndSetWhisper(name, cardId) {
+        const btn = document.getElementById("btn-" + cardId);
+        if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> 下载中…'; }
+        wlog(`正在下载 ${name}，首次下载可能需要几分钟，请耐心等待…`);
+
+        try {
+          const body = new URLSearchParams();
+          body.set("model", name);
+          const resp = await fetch("/api/setup/preload_whisper", { method: "POST", body });
+          const d = await resp.json();
+          if (resp.ok) {
+            wlog(`✅ ${name} 下载完成，已加载就绪！`);
+          } else {
+            wlog(`❌ 下载失败: ${d.detail || "未知错误"}`);
+          }
+        } catch (e) {
+          wlog(`❌ 下载失败: ${e.message}`);
+        }
+        await runCheck();
+      }
+
+      function wlog(msg) {
+        const el = document.getElementById("whisperLog");
+        el.style.display = "block";
+        el.textContent += msg + "\n";
+        el.scrollTop = el.scrollHeight;
+      }
+
       async function runCheck() {
         try {
           const resp = await fetch("/api/setup/check");
           const d = await resp.json();
           installedModels = d.ollama_models || [];
+          downloadedWhisper = (d.whisper && d.whisper.downloaded_models) || [];
           currentConfig = d.config || {};
 
           // Ollama status
@@ -367,8 +467,15 @@
           // Whisper
           document.getElementById("whisperDot").className = "dot " + (d.whisper.downloaded ? "ok" : "warn");
           document.getElementById("whisperVal").textContent =
-            d.whisper.model + (d.whisper.downloaded ? " (已下载)" : " (首次使用时下载)");
+            d.whisper.model + (d.whisper.downloaded ? " (已下载)" : " (未下载)");
           document.getElementById("whisperDevice").textContent = d.config.whisper_device;
+          renderWhisperCards();
+
+          // 截图翻译目标语言
+          const langSel = document.getElementById("translateTargetLang");
+          if (langSel && d.config.translate_target_lang) {
+            langSel.value = d.config.translate_target_lang;
+          }
 
           // System tools
           for (const [tool, ok] of Object.entries(d.system_tools)) {
@@ -381,10 +488,13 @@
           }
 
           // Keywords
-          const statusResp = await fetch("/api/status");
-          const statusData = await statusResp.json();
-          const kw = statusData.custom_keywords || [];
+          const kw = d.config.custom_keywords || [];
           document.getElementById("keywordsInput").value = kw.join("、");
+
+          // Hotkeys
+          document.getElementById("hotkeyVoice").value = d.config.hotkey_voice || "ctrl+grave";
+          document.getElementById("hotkeyScreenshot").value = d.config.hotkey_screenshot || "alt+x";
+          document.getElementById("hotkeyRepeat").value = d.config.hotkey_repeat || "ctrl+shift+z";
         } catch (e) {
           console.error(e);
         }
@@ -561,6 +671,51 @@
           }
         } catch (e) {
           const el = document.getElementById("keywordsSaved");
+          el.style.display = "block";
+          el.style.color = "var(--err)";
+          el.textContent = "保存失败: " + e.message;
+        }
+      }
+
+      async function saveHotkeys() {
+        const body = new URLSearchParams();
+        body.set("hotkey_voice", document.getElementById("hotkeyVoice").value.trim());
+        body.set("hotkey_screenshot", document.getElementById("hotkeyScreenshot").value.trim());
+        body.set("hotkey_repeat", document.getElementById("hotkeyRepeat").value.trim());
+        try {
+          const resp = await fetch("/api/setup/set_config", { method: "POST", body });
+          const d = await resp.json();
+          if (d.ok) {
+            const el = document.getElementById("hotkeysSaved");
+            el.style.display = "block";
+            el.style.color = "var(--ok)";
+            el.textContent = "已保存，重启服务后生效";
+            setTimeout(() => { el.style.display = "none"; }, 3000);
+          }
+        } catch (e) {
+          const el = document.getElementById("hotkeysSaved");
+          el.style.display = "block";
+          el.style.color = "var(--err)";
+          el.textContent = "保存失败: " + e.message;
+        }
+        await runCheck();
+      }
+
+      async function saveTranslateLang() {
+        const lang = document.getElementById("translateTargetLang").value;
+        const body = new URLSearchParams();
+        body.set("translate_target_lang", lang);
+        try {
+          const resp = await fetch("/api/setup/set_config", { method: "POST", body });
+          const d = await resp.json();
+          if (d.ok) {
+            const el = document.getElementById("translateSaved");
+            el.style.display = "block";
+            el.textContent = "已保存（重启守护进程后生效）";
+            setTimeout(() => { el.style.display = "none"; }, 3000);
+          }
+        } catch (e) {
+          const el = document.getElementById("translateSaved");
           el.style.display = "block";
           el.style.color = "var(--err)";
           el.textContent = "保存失败: " + e.message;

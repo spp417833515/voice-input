@@ -32,17 +32,27 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
 OLLAMA_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT", "120"))
 WHISPER_VAD_FILTER = os.getenv("WHISPER_VAD_FILTER", "true").lower() == "true"
 CUSTOM_KEYWORDS: list[str] = []
+TRANSLATE_TARGET_LANG = "zh"
+HOTKEY_VOICE = "ctrl+grave"
+HOTKEY_SCREENSHOT = "alt+x"
+HOTKEY_REPEAT = "ctrl+shift+z"
 
 
 def _load_config() -> None:
     """从 .config.json 加载持久化配置。"""
-    global OLLAMA_MODEL, CUSTOM_KEYWORDS
+    global OLLAMA_MODEL, CUSTOM_KEYWORDS, WHISPER_MODEL_NAME, TRANSLATE_TARGET_LANG
+    global HOTKEY_VOICE, HOTKEY_SCREENSHOT, HOTKEY_REPEAT
     if not CONFIG_PATH.exists():
         return
     try:
         cfg = json.loads(CONFIG_PATH.read_text())
         OLLAMA_MODEL = cfg.get("ollama_model", OLLAMA_MODEL)
         CUSTOM_KEYWORDS = cfg.get("custom_keywords", CUSTOM_KEYWORDS)
+        WHISPER_MODEL_NAME = cfg.get("whisper_model", WHISPER_MODEL_NAME)
+        TRANSLATE_TARGET_LANG = cfg.get("translate_target_lang", TRANSLATE_TARGET_LANG)
+        HOTKEY_VOICE = cfg.get("hotkey_voice", HOTKEY_VOICE)
+        HOTKEY_SCREENSHOT = cfg.get("hotkey_screenshot", HOTKEY_SCREENSHOT)
+        HOTKEY_REPEAT = cfg.get("hotkey_repeat", HOTKEY_REPEAT)
     except Exception:
         pass
 
@@ -52,6 +62,11 @@ def _save_config() -> None:
     cfg = {
         "ollama_model": OLLAMA_MODEL,
         "custom_keywords": CUSTOM_KEYWORDS,
+        "whisper_model": WHISPER_MODEL_NAME,
+        "translate_target_lang": TRANSLATE_TARGET_LANG,
+        "hotkey_voice": HOTKEY_VOICE,
+        "hotkey_screenshot": HOTKEY_SCREENSHOT,
+        "hotkey_repeat": HOTKEY_REPEAT,
     }
     if CONFIG_PATH.exists():
         try:
@@ -122,11 +137,14 @@ def get_whisper_model():
 
 def transcribe_audio(audio_path: str, language: str) -> str:
     model = get_whisper_model()
+    # 将自定义关键词作为 initial_prompt 传入，提升专有名词识别率
+    prompt = "，".join(CUSTOM_KEYWORDS) if CUSTOM_KEYWORDS else None
     segments, _info = model.transcribe(
         audio_path,
         language=None if language == "auto" else language,
         vad_filter=WHISPER_VAD_FILTER,
         beam_size=5,
+        initial_prompt=prompt,
     )
     text = " ".join(segment.text.strip() for segment in segments).strip()
     if not text:
@@ -146,24 +164,15 @@ def build_prompt(mode: str, raw_text: str) -> list[dict[str, str]]:
     if mode == "raw":
         return []
 
-    if mode == "polish":
-        system = (
-            "你是语音输入纠错工具。"
-            "规则：1.补全标点 2.修正错别字 3.清理口语噪声词（嗯、啊、那个）"
-        )
-        if CUSTOM_KEYWORDS:
-            kw_str = "、".join(CUSTOM_KEYWORDS)
-            system += f"4.以下为常用专有名词，遇到发音相近的错误请优先纠正为这些词：{kw_str}。"
-        system += (
-            "禁止：解释、补充、改变原意、添加任何说明文字。"
-            "直接输出修正后的文本，不要输出其他任何内容。"
-        )
-    elif mode == "translate_en":
+    if mode == "translate_en":
         system = (
             "你是一个翻译助手。"
             "请把用户给出的中文语音转写结果翻译成自然、简洁的英文。"
-            "只输出最终英文，不要解释。"
         )
+        if CUSTOM_KEYWORDS:
+            kw_str = "、".join(CUSTOM_KEYWORDS)
+            system += f"以下为专有名词，翻译时请保留或使用其正确英文形式：{kw_str}。"
+        system += "只输出最终英文，不要解释。"
     else:
         raise HTTPException(status_code=400, detail=f"不支持的模式: {mode}")
 
@@ -209,7 +218,7 @@ async def call_ollama(mode: str, raw_text: str) -> str:
 
 @app.get("/")
 async def index():
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(STATIC_DIR / "setup.html")
 
 
 @app.get("/setup")
@@ -225,29 +234,6 @@ async def history_page():
 # ---------------------------------------------------------------------------
 # 业务 API
 # ---------------------------------------------------------------------------
-
-
-@app.get("/api/status")
-async def status():
-    ollama_ok = False
-    installed_models = []
-    try:
-        async with httpx.AsyncClient(timeout=3) as client:
-            response = await client.get(f"{OLLAMA_BASE_URL}/api/tags")
-            response.raise_for_status()
-            ollama_ok = True
-            installed_models = [m["name"] for m in response.json().get("models", [])]
-    except Exception:
-        ollama_ok = False
-
-    return {
-        "whisper_model": WHISPER_MODEL_NAME,
-        "whisper_device": WHISPER_DEVICE,
-        "whisper_language": WHISPER_LANGUAGE,
-        "ollama_model": OLLAMA_MODEL,
-        "ollama_ok": ollama_ok,
-        "custom_keywords": CUSTOM_KEYWORDS,
-    }
 
 
 @app.get("/api/history")
@@ -294,9 +280,8 @@ async def transcribe(
                 detail="音频文件太小，录音时间可能不足。请按住按钮至少 1 秒再松开。",
             )
         raw_text = await asyncio.to_thread(transcribe_audio, tmp_path, language)
-        final_text = await call_ollama(mode, raw_text)
-        _save_history(raw_text, final_text, mode, language)
-        return {"raw_text": raw_text, "final_text": final_text, "mode": mode}
+        _save_history(raw_text, raw_text, mode, language)
+        return {"raw_text": raw_text, "final_text": raw_text, "mode": mode}
     finally:
         try:
             Path(tmp_path).unlink(missing_ok=True)
@@ -358,12 +343,24 @@ async def ocr_translate(
 @app.get("/api/setup/check")
 async def setup_check():
     """一次性检查所有组件状态。"""
+    # 扫描已下载的 whisper 模型
+    downloaded_whisper = []
+    if MODEL_CACHE_DIR.exists():
+        for p in MODEL_CACHE_DIR.iterdir():
+            if p.is_dir():
+                name = p.name.lower()
+                for tag in ("large-v3-turbo", "large-v3", "large-v2", "medium", "small", "base", "tiny"):
+                    if tag in name:
+                        downloaded_whisper.append(tag)
+                        break
+
     result = {
         "ollama": {"installed": False, "running": False, "version": None},
         "ollama_models": [],
         "whisper": {
             "model": WHISPER_MODEL_NAME,
-            "downloaded": False,
+            "downloaded": WHISPER_MODEL_NAME in downloaded_whisper,
+            "downloaded_models": downloaded_whisper,
         },
         "system_tools": {},
         "config": {
@@ -371,6 +368,12 @@ async def setup_check():
             "whisper_model": WHISPER_MODEL_NAME,
             "whisper_device": WHISPER_DEVICE,
             "whisper_language": WHISPER_LANGUAGE,
+            "voice_mode": "raw",
+            "translate_target_lang": TRANSLATE_TARGET_LANG,
+            "custom_keywords": CUSTOM_KEYWORDS,
+            "hotkey_voice": HOTKEY_VOICE,
+            "hotkey_screenshot": HOTKEY_SCREENSHOT,
+            "hotkey_repeat": HOTKEY_REPEAT,
         },
     }
 
@@ -400,15 +403,7 @@ async def setup_check():
     except Exception:
         pass
 
-    # 3. whisper 模型是否已缓存
-    if MODEL_CACHE_DIR.exists():
-        # faster-whisper 下载的模型目录名包含模型名
-        for p in MODEL_CACHE_DIR.iterdir():
-            if WHISPER_MODEL_NAME in p.name:
-                result["whisper"]["downloaded"] = True
-                break
-
-    # 4. 系统工具检查
+    # 3. 系统工具检查
     for tool in ["maim", "xclip", "notify-send"]:
         result["system_tools"][tool] = shutil.which(tool) is not None
 
@@ -523,14 +518,36 @@ async def start_ollama():
 @app.post("/api/setup/set_config")
 async def set_config(
     ollama_model: str = Form(None),
+    whisper_model: str = Form(None),
     custom_keywords: str = Form(None),
+    translate_target_lang: str = Form(None),
+    hotkey_voice: str = Form(None),
+    hotkey_screenshot: str = Form(None),
+    hotkey_repeat: str = Form(None),
 ):
     """运行时切换模型/关键词（不重启服务），同时持久化到 .config.json。"""
-    global OLLAMA_MODEL, CUSTOM_KEYWORDS
+    global OLLAMA_MODEL, CUSTOM_KEYWORDS, WHISPER_MODEL_NAME, _whisper_model, TRANSLATE_TARGET_LANG
+    global HOTKEY_VOICE, HOTKEY_SCREENSHOT, HOTKEY_REPEAT
     changed = {}
     if ollama_model and ollama_model != OLLAMA_MODEL:
         OLLAMA_MODEL = ollama_model
         changed["ollama_model"] = ollama_model
+    if whisper_model and whisper_model != WHISPER_MODEL_NAME:
+        WHISPER_MODEL_NAME = whisper_model
+        _whisper_model = None
+        changed["whisper_model"] = whisper_model
+    if translate_target_lang and translate_target_lang != TRANSLATE_TARGET_LANG:
+        TRANSLATE_TARGET_LANG = translate_target_lang
+        changed["translate_target_lang"] = translate_target_lang
+    if hotkey_voice and hotkey_voice != HOTKEY_VOICE:
+        HOTKEY_VOICE = hotkey_voice
+        changed["hotkey_voice"] = hotkey_voice
+    if hotkey_screenshot and hotkey_screenshot != HOTKEY_SCREENSHOT:
+        HOTKEY_SCREENSHOT = hotkey_screenshot
+        changed["hotkey_screenshot"] = hotkey_screenshot
+    if hotkey_repeat and hotkey_repeat != HOTKEY_REPEAT:
+        HOTKEY_REPEAT = hotkey_repeat
+        changed["hotkey_repeat"] = hotkey_repeat
     if custom_keywords is not None:
         # 支持逗号、顿号、空格分隔
         import re
@@ -543,3 +560,20 @@ async def set_config(
     if changed:
         _save_config()
     return {"ok": True, "changed": changed}
+
+
+@app.post("/api/setup/preload_whisper")
+async def preload_whisper(model: str = Form(None)):
+    """预下载并加载 Whisper 模型。模型不存在时会自动从 HuggingFace 下载。"""
+    global _whisper_model, WHISPER_MODEL_NAME
+    target = model or WHISPER_MODEL_NAME
+    if model and model != WHISPER_MODEL_NAME:
+        WHISPER_MODEL_NAME = model
+        _whisper_model = None
+        _save_config()
+
+    try:
+        await asyncio.to_thread(get_whisper_model)
+        return {"ok": True, "model": target, "message": f"{target} 已加载就绪"}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"加载模型失败: {exc}") from exc
