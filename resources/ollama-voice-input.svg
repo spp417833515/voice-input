@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6366F1"/>
+      <stop offset="100%" stop-color="#8B5CF6"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+  <!-- Background -->
+  <rect width="256" height="256" rx="56" fill="url(#bg)"/>
+  <!-- Microphone body -->
+  <rect x="96" y="48" width="64" height="96" rx="32" fill="white" opacity="0.95" filter="url(#shadow)"/>
+  <!-- Microphone grille lines -->
+  <line x1="108" y1="72" x2="148" y2="72" stroke="#6366F1" stroke-width="2" opacity="0.3"/>
+  <line x1="108" y1="84" x2="148" y2="84" stroke="#6366F1" stroke-width="2" opacity="0.3"/>
+  <line x1="108" y1="96" x2="148" y2="96" stroke="#6366F1" stroke-width="2" opacity="0.3"/>
+  <line x1="108" y1="108" x2="148" y2="108" stroke="#6366F1" stroke-width="2" opacity="0.3"/>
+  <!-- Microphone stand arc -->
+  <path d="M72 120 Q72 180 128 180 Q184 180 184 120" stroke="white" stroke-width="10" fill="none" stroke-linecap="round" opacity="0.9"/>
+  <!-- Microphone pole -->
+  <line x1="128" y1="180" x2="128" y2="210" stroke="white" stroke-width="10" stroke-linecap="round" opacity="0.9"/>
+  <!-- Microphone base -->
+  <line x1="100" y1="210" x2="156" y2="210" stroke="white" stroke-width="10" stroke-linecap="round" opacity="0.9"/>
+  <!-- Sound waves -->
+  <path d="M200 76 Q218 120 200 164" stroke="white" stroke-width="6" fill="none" stroke-linecap="round" opacity="0.45"/>
+  <path d="M218 60 Q244 120 218 180" stroke="white" stroke-width="5" fill="none" stroke-linecap="round" opacity="0.25"/>
+</svg>

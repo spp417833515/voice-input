@@ -33,6 +33,8 @@ OLLAMA_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT", "120"))
 WHISPER_VAD_FILTER = os.getenv("WHISPER_VAD_FILTER", "true").lower() == "true"
 CUSTOM_KEYWORDS: list[str] = []
 TRANSLATE_TARGET_LANG = "zh"
+BAIDU_APPID = ""
+BAIDU_APPKEY = ""
 HOTKEY_VOICE = "ctrl+grave"
 HOTKEY_SCREENSHOT = "alt+x"
 HOTKEY_REPEAT = "ctrl+shift+z"
@@ -42,6 +44,7 @@ def _load_config() -> None:
     """从 .config.json 加载持久化配置。"""
     global OLLAMA_MODEL, CUSTOM_KEYWORDS, WHISPER_MODEL_NAME, TRANSLATE_TARGET_LANG
     global HOTKEY_VOICE, HOTKEY_SCREENSHOT, HOTKEY_REPEAT
+    global BAIDU_APPID, BAIDU_APPKEY
     if not CONFIG_PATH.exists():
         return
     try:
@@ -50,6 +53,8 @@ def _load_config() -> None:
         CUSTOM_KEYWORDS = cfg.get("custom_keywords", CUSTOM_KEYWORDS)
         WHISPER_MODEL_NAME = cfg.get("whisper_model", WHISPER_MODEL_NAME)
         TRANSLATE_TARGET_LANG = cfg.get("translate_target_lang", TRANSLATE_TARGET_LANG)
+        BAIDU_APPID = cfg.get("baidu_appid", BAIDU_APPID)
+        BAIDU_APPKEY = cfg.get("baidu_appkey", BAIDU_APPKEY)
         HOTKEY_VOICE = cfg.get("hotkey_voice", HOTKEY_VOICE)
         HOTKEY_SCREENSHOT = cfg.get("hotkey_screenshot", HOTKEY_SCREENSHOT)
         HOTKEY_REPEAT = cfg.get("hotkey_repeat", HOTKEY_REPEAT)
@@ -64,6 +69,8 @@ def _save_config() -> None:
         "custom_keywords": CUSTOM_KEYWORDS,
         "whisper_model": WHISPER_MODEL_NAME,
         "translate_target_lang": TRANSLATE_TARGET_LANG,
+        "baidu_appid": BAIDU_APPID,
+        "baidu_appkey": BAIDU_APPKEY,
         "hotkey_voice": HOTKEY_VOICE,
         "hotkey_screenshot": HOTKEY_SCREENSHOT,
         "hotkey_repeat": HOTKEY_REPEAT,
@@ -139,14 +146,30 @@ def transcribe_audio(audio_path: str, language: str) -> str:
     model = get_whisper_model()
     # 将自定义关键词作为 initial_prompt 传入，提升专有名词识别率
     prompt = "，".join(CUSTOM_KEYWORDS) if CUSTOM_KEYWORDS else None
+    # 短录音（<3秒）关闭 VAD 过滤，避免误判为静音丢弃
+    import soundfile as _sf
+    _audio_info = _sf.info(audio_path)
+    use_vad = WHISPER_VAD_FILTER and _audio_info.duration >= 3.0
     segments, _info = model.transcribe(
         audio_path,
         language=None if language == "auto" else language,
-        vad_filter=WHISPER_VAD_FILTER,
+        vad_filter=use_vad,
         beam_size=5,
         initial_prompt=prompt,
     )
-    text = " ".join(segment.text.strip() for segment in segments).strip()
+    # 过滤 Whisper 幻觉（短音频/静音容易产生虚假文本）
+    # 策略: 段落声称的时间远超实际音频时长 → 幻觉
+    audio_duration = _audio_info.duration
+    real_segments = []
+    for seg in segments:
+        # 幻觉特征: 0.3s 音频却生成 [0.00-29.98] 的段落
+        if seg.end > audio_duration * 2 + 1.0:
+            continue
+        # 辅助过滤: 高 no_speech_prob（无 initial_prompt 干扰时生效）
+        if seg.no_speech_prob > 0.6:
+            continue
+        real_segments.append(seg.text.strip())
+    text = " ".join(real_segments).strip()
     if not text:
         raise HTTPException(
             status_code=400,
@@ -273,12 +296,6 @@ async def transcribe(
             tmp.write(chunk)
 
     try:
-        file_size = Path(tmp_path).stat().st_size
-        if file_size < 1024:
-            raise HTTPException(
-                status_code=400,
-                detail="音频文件太小，录音时间可能不足。请按住按钮至少 1 秒再松开。",
-            )
         raw_text = await asyncio.to_thread(transcribe_audio, tmp_path, language)
         _save_history(raw_text, raw_text, mode, language)
         return {"raw_text": raw_text, "final_text": raw_text, "mode": mode}
@@ -289,14 +306,54 @@ async def transcribe(
             pass
 
 
+def _translate_text(text: str, target: str) -> tuple[str, str]:
+    """翻译文本，降级链：Google → 百度 → MyMemory。返回 (翻译结果, 引擎名)。"""
+    from deep_translator import GoogleTranslator, MyMemoryTranslator
+    errors = []
+
+    # 1. Google Translate（主引擎）
+    try:
+        result = GoogleTranslator(source="auto", target=target).translate(text)
+        if result:
+            return result, "GoogleTranslate"
+    except Exception as exc:
+        errors.append(f"Google: {exc}")
+
+    # 2. 百度翻译（需要 appid + appkey）
+    if BAIDU_APPID and BAIDU_APPKEY:
+        try:
+            from deep_translator import BaiduTranslator
+            # 百度 API 语言代码映射
+            baidu_lang = {"zh-CN": "zh", "en": "en", "ja": "jp", "ko": "kor"}.get(target, "zh")
+            result = BaiduTranslator(
+                appid=BAIDU_APPID, appkey=BAIDU_APPKEY,
+                source="auto", target=baidu_lang,
+            ).translate(text)
+            if result:
+                return result, "BaiduTranslate"
+        except Exception as exc:
+            errors.append(f"Baidu: {exc}")
+
+    # 3. MyMemory（免费兜底，无需 API key）
+    try:
+        # MyMemory 需要完整语言代码
+        mm_lang = {"zh-CN": "zh-CN", "en": "en-GB", "ja": "ja-JP", "ko": "ko-KR"}.get(target, "zh-CN")
+        result = MyMemoryTranslator(source="autodetect", target=mm_lang).translate(text)
+        if result:
+            return result, "MyMemory"
+    except Exception as exc:
+        errors.append(f"MyMemory: {exc}")
+
+    raise RuntimeError(f"所有翻译引擎均失败: {'; '.join(errors)}")
+
+
 @app.post("/api/ocr_translate")
 async def ocr_translate(
     image: UploadFile = File(...),
     target_lang: str = Form("zh"),
 ):
-    """tesseract OCR 提取文字 + Google 翻译。完全不用大模型。"""
+    """tesseract OCR 提取文字 + 多引擎翻译（Google→百度→MyMemory）。"""
     import pytesseract
-    from deep_translator import GoogleTranslator
     from PIL import Image
     import io
 
@@ -320,19 +377,19 @@ async def ocr_translate(
     if target_lang == "raw":
         return {"text": raw_text, "model": "tesseract"}
 
-    # ---- 第 2 步：Google 翻译 ----
+    # ---- 第 2 步：多引擎翻译（Google → 百度 → MyMemory） ----
     lang_map = {"zh": "zh-CN", "en": "en", "ja": "ja", "ko": "ko"}
     target = lang_map.get(target_lang, "zh-CN")
 
     try:
-        translated = GoogleTranslator(source="auto", target=target).translate(raw_text)
+        translated, engine = _translate_text(raw_text, target)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Google 翻译失败: {exc}") from exc
+        raise HTTPException(status_code=502, detail=f"翻译失败: {exc}") from exc
 
     if not translated:
         raise HTTPException(status_code=502, detail="翻译没有返回结果")
 
-    return {"text": translated, "model": "tesseract + GoogleTranslate"}
+    return {"text": translated, "model": f"tesseract + {engine}"}
 
 
 # ---------------------------------------------------------------------------
@@ -370,6 +427,8 @@ async def setup_check():
             "whisper_language": WHISPER_LANGUAGE,
             "voice_mode": "raw",
             "translate_target_lang": TRANSLATE_TARGET_LANG,
+            "baidu_appid": BAIDU_APPID,
+            "baidu_appkey": "***" if BAIDU_APPKEY else "",
             "custom_keywords": CUSTOM_KEYWORDS,
             "hotkey_voice": HOTKEY_VOICE,
             "hotkey_screenshot": HOTKEY_SCREENSHOT,
@@ -521,6 +580,8 @@ async def set_config(
     whisper_model: str = Form(None),
     custom_keywords: str = Form(None),
     translate_target_lang: str = Form(None),
+    baidu_appid: str = Form(None),
+    baidu_appkey: str = Form(None),
     hotkey_voice: str = Form(None),
     hotkey_screenshot: str = Form(None),
     hotkey_repeat: str = Form(None),
@@ -528,6 +589,7 @@ async def set_config(
     """运行时切换模型/关键词（不重启服务），同时持久化到 .config.json。"""
     global OLLAMA_MODEL, CUSTOM_KEYWORDS, WHISPER_MODEL_NAME, _whisper_model, TRANSLATE_TARGET_LANG
     global HOTKEY_VOICE, HOTKEY_SCREENSHOT, HOTKEY_REPEAT
+    global BAIDU_APPID, BAIDU_APPKEY
     changed = {}
     if ollama_model and ollama_model != OLLAMA_MODEL:
         OLLAMA_MODEL = ollama_model
@@ -539,6 +601,12 @@ async def set_config(
     if translate_target_lang and translate_target_lang != TRANSLATE_TARGET_LANG:
         TRANSLATE_TARGET_LANG = translate_target_lang
         changed["translate_target_lang"] = translate_target_lang
+    if baidu_appid is not None and baidu_appid != BAIDU_APPID:
+        BAIDU_APPID = baidu_appid
+        changed["baidu_appid"] = baidu_appid
+    if baidu_appkey is not None and baidu_appkey != BAIDU_APPKEY:
+        BAIDU_APPKEY = baidu_appkey
+        changed["baidu_appkey"] = "(已设置)"
     if hotkey_voice and hotkey_voice != HOTKEY_VOICE:
         HOTKEY_VOICE = hotkey_voice
         changed["hotkey_voice"] = hotkey_voice

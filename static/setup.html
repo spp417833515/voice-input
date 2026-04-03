@@ -251,7 +251,7 @@
         <div class="panel">
           <div class="row" style="flex-direction:column;align-items:stretch;gap:8px">
             <span class="row-label">翻译方式</span>
-            <span style="color:var(--muted);font-size:13px">截图翻译使用 tesseract OCR 识别文字 + Google Translate 翻译。需要网络连接。</span>
+            <span style="color:var(--muted);font-size:13px">降级链：Google Translate → 百度翻译 → MyMemory。Google 失败时自动尝试下一个引擎。</span>
           </div>
           <div class="row" style="padding:12px 0">
             <span class="row-label">目标语言</span>
@@ -262,6 +262,18 @@
               <option value="ko">韩文</option>
               <option value="raw">仅 OCR（不翻译）</option>
             </select>
+          </div>
+          <div style="border-top:1px solid var(--line);margin-top:8px;padding-top:12px">
+            <div class="row" style="flex-direction:column;align-items:stretch;gap:8px">
+              <span class="row-label">百度翻译 API（可选）</span>
+              <span style="color:var(--muted);font-size:13px">配置后作为 Google 的备用引擎。<a href="https://fanyi-api.baidu.com/" target="_blank" style="color:var(--accent)">免费注册</a>，每月 200 万字符免费额度。</span>
+            </div>
+            <div class="row" style="padding:8px 0;gap:8px">
+              <input id="baiduAppId" type="text" placeholder="APP ID" style="flex:1;padding:8px 12px;border:1px solid var(--line);border-radius:10px;font:inherit;font-size:14px">
+              <input id="baiduAppKey" type="password" placeholder="密钥（APP Key）" style="flex:1;padding:8px 12px;border:1px solid var(--line);border-radius:10px;font:inherit;font-size:14px">
+              <button onclick="saveBaiduConfig()" style="padding:8px 16px;border:none;border-radius:10px;background:var(--accent);color:white;cursor:pointer;font-size:14px">保存</button>
+            </div>
+            <div id="baiduSaved" style="margin-top:4px;font-size:13px;color:var(--ok);display:none"></div>
           </div>
           <div id="translateSaved" style="margin-top:8px;font-size:13px;color:var(--ok);display:none"></div>
         </div>
@@ -290,6 +302,12 @@
       <div style="margin-top: 20px; text-align: center;">
         <button class="btn" onclick="runCheck()">🔄 重新检测</button>
       </div>
+
+      <footer style="margin-top: 40px; padding: 20px 0 0; border-top: 1px solid var(--line); text-align: center; color: var(--muted); font-size: 0.85em;">
+        <p style="margin: 4px 0;">Ollama Voice Input — 全局语音输入 + 截图翻译，完全本地运行</p>
+        <p style="margin: 4px 0;">作者: <strong>pp</strong> &nbsp;|&nbsp; QQ: <strong>417833515</strong></p>
+        <p style="margin: 8px 0 0; font-size: 0.8em; opacity: 0.7;">支持 Linux (X11 / Wayland+XWayland)</p>
+      </footer>
     </div>
 
     <script>
@@ -475,6 +493,13 @@
           const langSel = document.getElementById("translateTargetLang");
           if (langSel && d.config.translate_target_lang) {
             langSel.value = d.config.translate_target_lang;
+          }
+          // 百度翻译 APP ID（密钥不回显）
+          if (d.config.baidu_appid) {
+            document.getElementById("baiduAppId").value = d.config.baidu_appid;
+          }
+          if (d.config.baidu_appkey) {
+            document.getElementById("baiduAppKey").placeholder = "已配置（留空不修改）";
           }
 
           // System tools
@@ -716,6 +741,35 @@
           }
         } catch (e) {
           const el = document.getElementById("translateSaved");
+          el.style.display = "block";
+          el.style.color = "var(--err)";
+          el.textContent = "保存失败: " + e.message;
+        }
+      }
+
+      async function saveBaiduConfig() {
+        const appid = document.getElementById("baiduAppId").value.trim();
+        const appkey = document.getElementById("baiduAppKey").value.trim();
+        const body = new URLSearchParams();
+        if (appid) body.set("baidu_appid", appid);
+        if (appkey) body.set("baidu_appkey", appkey);
+        if (!appid && !appkey) {
+          // 清空百度配置
+          body.set("baidu_appid", "");
+          body.set("baidu_appkey", "");
+        }
+        try {
+          const resp = await fetch("/api/setup/set_config", { method: "POST", body });
+          const d = await resp.json();
+          if (d.ok) {
+            const el = document.getElementById("baiduSaved");
+            el.style.display = "block";
+            el.style.color = "var(--ok)";
+            el.textContent = "已保存";
+            setTimeout(() => { el.style.display = "none"; }, 3000);
+          }
+        } catch (e) {
+          const el = document.getElementById("baiduSaved");
           el.style.display = "block";
           el.style.color = "var(--err)";
           el.textContent = "保存失败: " + e.message;

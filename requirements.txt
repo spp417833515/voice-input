@@ -10,3 +10,4 @@ numpy==2.2.4
 soundfile==0.13.1
 python-xlib>=0.33
 evdev>=1.7.0
+deep-translator>=1.11.4

@@ -9,3 +9,4 @@ __pycache__/
 .ppdocs-index/
 .agents/
 .claude/
+.daemon.lock

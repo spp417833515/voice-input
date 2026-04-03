@@ -101,35 +101,34 @@ sudo apt install maim xclip
 sudo pacman -S maim xclip
 ```
 
-### 方式一：一键启动（推荐）
+### 方式一：安装并启动用户服务（推荐）
 
 ```bash
 git clone https://github.com/spp417833515/voice-input.git
 cd ollama-voice-input
-chmod +x start.sh
+chmod +x install.sh start.sh
+./install.sh
 ./start.sh
 ```
 
-`start.sh` 会自动完成：创建虚拟环境 → 安装依赖 → 检查/启动 Ollama → 拉取模型 → 启动服务。
+`install.sh` 负责注册 `systemd --user` 服务；`start.sh` 负责检查依赖 / 模型并启动这些用户服务，不再直接后台拉起 `uvicorn` 和 `daemon.py`。
 
-### 方式二：手动启动
+### 方式二：直接管理 systemd 用户服务
 
 ```bash
-# 1. 创建虚拟环境 & 安装依赖
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+# 首次安装
+./install.sh
 
-# 2. 确保 Ollama 已运行
-ollama serve &
-ollama pull qwen2.5:7b        # 语音润色模型
-ollama pull moondream:1.8b     # 截图翻译视觉模型
+# 启动
+systemctl --user start ollama-voice-server
+systemctl --user start ollama-voice-daemon
 
-# 3. 启动 API 服务
-uvicorn app:app --host 127.0.0.1 --port 17945 &
+# 重启
+./restart.sh
 
-# 4. 启动全局快捷键守护进程
-python daemon.py
+# 查看状态
+systemctl --user status ollama-voice-server
+systemctl --user status ollama-voice-daemon
 ```
 
 ### 方式三：零依赖轻量版
@@ -212,9 +211,9 @@ ollama-voice-input/
 ├── app.py               # FastAPI 后端 (Whisper + Ollama API)
 ├── daemon.py            # 桌面守护进程 (全局热键 + 悬浮状态栏)
 ├── screenshot_ui.py     # 独立截图翻译工具
-├── start.sh             # 一键启动脚本
-├── install.sh           # 开机自启安装脚本
-├── restart.sh           # 快速重启脚本
+├── start.sh             # 用户服务启动包装脚本
+├── install.sh           # 安装 / 更新脚本（注册 systemd 用户服务）
+├── restart.sh           # 用户服务快速重启脚本
 ├── requirements.txt     # Python 依赖
 ├── .config.json         # 运行时配置（快捷键、语音模式等）
 ├── .env.example         # 环境变量参考
@@ -274,16 +273,20 @@ chmod +x install.sh
 1. 注册 systemd 用户服务（开机自动启动）
 2. 创建桌面快捷方式
 3. 添加到应用菜单
+4. 移除旧版 autostart 双启动入口
 
 管理命令：
 
 ```bash
 # 启动/停止
+./start.sh
+./restart.sh
 systemctl --user start ollama-voice-server
 systemctl --user start ollama-voice-daemon
 
 # 查看状态
 systemctl --user status ollama-voice-server
+systemctl --user status ollama-voice-daemon
 
 # 卸载
 systemctl --user disable --now ollama-voice-server
@@ -356,13 +359,13 @@ sudo udevadm control --reload-rules
 <details>
 <summary><b>Q: 支持 Wayland 吗？</b></summary>
 
-当前版本依赖 X11（XGrabKey、XTest），暂不支持 Wayland。剪贴板操作已兼容 Wayland（自动检测并使用 wl-copy）。
+当前版本在 GNOME Wayland 下通过 XWayland + uinput + 剪贴板回退工作。悬浮状态栏和全局热键依赖 XWayland；输入法级 direct commit 只在支持 `current_input_context` 的 IBus 会话中启用，`fcitx5` 等会自动回退到剪贴板粘贴链。
 </details>
 
 <details>
 <summary><b>Q: 如何使用 GPU 加速？</b></summary>
 
-安装 CUDA 版本的 PyTorch，然后设置 `WHISPER_DEVICE=cuda`。`start.sh` 会自动检测并设置 CUDA 库路径。
+安装 CUDA 版本的 PyTorch，然后设置 `WHISPER_DEVICE=cuda`。`install.sh` 会把 CUDA 库路径写入 user service，`start.sh` 会负责同步并启动这些服务。
 </details>
 
 <details>
@@ -405,7 +408,7 @@ sudo udevadm control --reload-rules
 - Web 界面 + 零依赖轻量版
 - Whisper 语音识别 + Ollama 文本润色
 - 悬浮状态栏 + 连续录音队列
-- 一键启动脚本 + systemd 开机自启
+- systemd 用户服务 + 启动/重启包装脚本
 
 ---
 

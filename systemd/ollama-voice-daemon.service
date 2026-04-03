@@ -1,13 +1,16 @@
 [Unit]
 Description=Ollama Voice Input - 全局快捷键守护进程
 After=ollama-voice-server.service
-Requires=ollama-voice-server.service
+Wants=ollama-voice-server.service
+StartLimitBurst=5
+StartLimitIntervalSec=60
 
 [Service]
 Type=simple
 WorkingDirectory=/home/spp/桌面/ollama-voice-input
-Environment=DISPLAY=:0
-ExecStart=/home/spp/桌面/ollama-voice-input/.venv/bin/python3 /home/spp/桌面/ollama-voice-input/daemon.py
+Environment=GDK_BACKEND=x11
+Environment=LD_LIBRARY_PATH=/home/spp/桌面/ollama-voice-input/.venv/lib/python3.12/site-packages/nvidia/cublas/lib:/home/spp/桌面/ollama-voice-input/.venv/lib/python3.12/site-packages/nvidia/cudnn/lib:/home/spp/桌面/ollama-voice-input/.venv/lib/python3.12/site-packages/nvidia/cuda_nvrtc/lib
+ExecStart=/bin/bash -c 'exec sg input -c "DISPLAY=$DISPLAY GDK_BACKEND=$GDK_BACKEND XAUTHORITY=$XAUTHORITY WAYLAND_DISPLAY=$WAYLAND_DISPLAY XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR XDG_SESSION_TYPE=$XDG_SESSION_TYPE DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS LD_LIBRARY_PATH=$LD_LIBRARY_PATH /home/spp/桌面/ollama-voice-input/.venv/bin/python3 /home/spp/桌面/ollama-voice-input/daemon.py"'
 Restart=on-failure
 RestartSec=3
 

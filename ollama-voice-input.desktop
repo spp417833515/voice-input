@@ -1,9 +1,11 @@
 [Desktop Entry]
 Name=Ollama Voice Input
-Comment=全局语音输入 + 截图翻译
-Exec=bash -c 'cd /home/spp/桌面/ollama-voice-input && ./start.sh'
-Terminal=true
+Name[zh_CN]=语音输入助手
+Comment=全局语音输入 + 截图翻译，完全本地运行
+Exec=bash -c 'cd "$(dirname "$(readlink -f "%k")")" && ./start.sh'
+Terminal=false
 Type=Application
 Icon=audio-input-microphone
-Categories=Utility;Audio;
+Categories=Utility;Audio;Accessibility;
 StartupNotify=false
+Keywords=voice;input;translate;screenshot;ollama;whisper;

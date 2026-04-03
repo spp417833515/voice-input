@@ -1,5 +1,5 @@
 #!/bin/bash
-# Ollama Voice Input —— 一键启动
+# Ollama Voice Input —— 启动 systemd 用户服务
 # 双击此文件运行，或在终端执行: ./start.sh
 
 set -e
@@ -7,18 +7,79 @@ set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
 VENV="$DIR/.venv"
 LOG_DIR="$DIR/.cache/logs"
+SYSTEMD_DIR="$HOME/.config/systemd/user"
+SERVER_SERVICE="ollama-voice-server.service"
+DAEMON_SERVICE="ollama-voice-daemon.service"
 mkdir -p "$LOG_DIR"
 
-# 颜色
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
+require_user_systemd() {
+    if ! systemctl --user show-environment >/dev/null 2>&1; then
+        echo -e "${RED}未检测到 systemd 用户会话，请在桌面会话中运行此脚本。${NC}"
+        exit 1
+    fi
+}
+
+import_session_env() {
+    systemctl --user import-environment \
+        DISPLAY \
+        XAUTHORITY \
+        WAYLAND_DISPLAY \
+        XDG_RUNTIME_DIR \
+        XDG_SESSION_TYPE \
+        DBUS_SESSION_BUS_ADDRESS >/dev/null 2>&1 || true
+}
+
+ensure_services_installed() {
+    local needs_install=0
+
+    [ ! -f "$SYSTEMD_DIR/$SERVER_SERVICE" ] && needs_install=1
+    [ ! -f "$SYSTEMD_DIR/$DAEMON_SERVICE" ] && needs_install=1
+    [ "$DIR/install.sh" -nt "$SYSTEMD_DIR/$SERVER_SERVICE" ] && needs_install=1
+    [ "$DIR/install.sh" -nt "$SYSTEMD_DIR/$DAEMON_SERVICE" ] && needs_install=1
+    [ "$DIR/systemd/$SERVER_SERVICE" -nt "$SYSTEMD_DIR/$SERVER_SERVICE" ] && needs_install=1
+    [ "$DIR/systemd/$DAEMON_SERVICE" -nt "$SYSTEMD_DIR/$DAEMON_SERVICE" ] && needs_install=1
+
+    if [ "$needs_install" -eq 1 ]; then
+        echo -e "${YELLOW}[3/4] 同步 systemd 服务定义...${NC}"
+        bash "$DIR/install.sh" --update
+    else
+        systemctl --user daemon-reload >/dev/null 2>&1 || true
+        systemctl --user enable "$SERVER_SERVICE" "$DAEMON_SERVICE" >/dev/null 2>&1 || true
+    fi
+}
+
+start_service() {
+    local service="$1"
+    local label="$2"
+
+    if systemctl --user is-active --quiet "$service"; then
+        echo -e "${GREEN}  $label 已在运行 ✓${NC}"
+        return 0
+    fi
+
+    systemctl --user start "$service"
+    sleep 1
+    if systemctl --user is-active --quiet "$service"; then
+        echo -e "${GREEN}  $label 已启动 ✓${NC}"
+        return 0
+    fi
+
+    echo -e "${RED}  $label 启动失败，请检查: systemctl --user status $service${NC}"
+    return 1
+}
+
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}  Ollama Voice Input 启动脚本${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
+
+require_user_systemd
+import_session_env
 
 # ---------- 1. 检查 / 创建 venv ----------
 if [ ! -f "$VENV/bin/python3" ]; then
@@ -47,91 +108,40 @@ if ! curl -sf http://127.0.0.1:11434/api/tags &>/dev/null; then
     fi
 fi
 
-# 检查默认模型
 OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:7b}"
 if ! curl -sf http://127.0.0.1:11434/api/tags | python3 -c "
 import sys, json
-models = [m['name'] for m in json.load(sys.stdin).get('models',[])]
+models = [m['name'] for m in json.load(sys.stdin).get('models', [])]
 sys.exit(0 if any('${OLLAMA_MODEL}'.split(':')[0] in m for m in models) else 1)
 " 2>/dev/null; then
     echo -e "${YELLOW}  拉取模型 $OLLAMA_MODEL...${NC}"
     ollama pull "$OLLAMA_MODEL"
 fi
 
-echo -e "${GREEN}  Ollama 就绪 ✓${NC}"
-
-# 检查视觉模型
 VISION_MODEL="${VISION_MODEL:-moondream:1.8b}"
 if ! curl -sf http://127.0.0.1:11434/api/tags | python3 -c "
 import sys, json
-models = [m['name'] for m in json.load(sys.stdin).get('models',[])]
+models = [m['name'] for m in json.load(sys.stdin).get('models', [])]
 sys.exit(0 if any('${VISION_MODEL}'.split(':')[0] in m for m in models) else 1)
 " 2>/dev/null; then
     echo -e "${YELLOW}  拉取视觉模型 $VISION_MODEL（截图翻译需要）...${NC}"
     ollama pull "$VISION_MODEL"
 fi
+echo -e "${GREEN}  Ollama 就绪 ✓${NC}"
 
-# ---------- 4. 设置 CUDA 库路径 ----------
-NVIDIA_LIB="$VENV/lib/python3.12/site-packages/nvidia"
-if [ -d "$NVIDIA_LIB" ]; then
-    CUDA_LIBS=""
-    for d in "$NVIDIA_LIB"/*/lib; do
-        [ -d "$d" ] && CUDA_LIBS="$CUDA_LIBS:$d"
-    done
-    export LD_LIBRARY_PATH="${CUDA_LIBS#:}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    echo -e "${GREEN}  CUDA 库路径已设置 ✓${NC}"
-fi
+ensure_services_installed
+import_session_env
 
-# ---------- 5. 启动服务 ----------
-echo -e "${YELLOW}[3/4] 启动 Web 服务器...${NC}"
-# 先释放端口，避免冲突
-fuser -k 17945/tcp 2>/dev/null || true
-pkill -f "daemon.py" 2>/dev/null || true
-sleep 1
-
-"$VENV/bin/uvicorn" app:app --host 127.0.0.1 --port 17945 \
-    >"$LOG_DIR/server.log" 2>&1 &
-SERVER_PID=$!
-sleep 2
-
-if kill -0 $SERVER_PID 2>/dev/null; then
-    echo -e "${GREEN}  Web 服务已启动: http://127.0.0.1:17945 ✓${NC}"
-    echo -e "${GREEN}  配置页面: http://127.0.0.1:17945/setup ✓${NC}"
-else
-    echo -e "${RED}  Web 服务启动失败，查看日志: $LOG_DIR/server.log${NC}"
-    exit 1
-fi
-
-# ---------- 5. 启动全局快捷键守护进程 ----------
-echo -e "${YELLOW}[4/4] 启动全局快捷键守护进程...${NC}"
-"$VENV/bin/python3" "$DIR/daemon.py" >"$LOG_DIR/daemon.log" 2>&1 &
-DAEMON_PID=$!
-sleep 1
-
-if kill -0 $DAEMON_PID 2>/dev/null; then
-    echo -e "${GREEN}  守护进程已启动 ✓${NC}"
-else
-    echo -e "${RED}  守护进程启动失败，查看日志: $LOG_DIR/daemon.log${NC}"
-fi
+# ---------- 4. 启动 systemd 用户服务 ----------
+echo -e "${YELLOW}[4/4] 启动用户服务...${NC}"
+start_service "$SERVER_SERVICE" "Web 服务"
+start_service "$DAEMON_SERVICE" "守护进程"
 
 echo ""
 echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}  全部就绪！${NC}"
+echo -e "${GREEN}  服务已就绪！${NC}"
+echo -e "${GREEN}  配置页面: http://127.0.0.1:17945/setup${NC}"
 echo -e "${GREEN}  Ctrl+\`     按住说话，松开粘贴${NC}"
-echo -e "${GREEN}  Alt+X       截图翻译（原位浮窗显示，右键关闭）${NC}"
-echo -e "${GREEN}  日志目录:   $LOG_DIR/${NC}"
+echo -e "${GREEN}  Alt+X       截图翻译${NC}"
+echo -e "${GREEN}  日志查看:   journalctl --user -u $SERVER_SERVICE -u $DAEMON_SERVICE -f${NC}"
 echo -e "${GREEN}========================================${NC}"
-echo ""
-echo "按 Ctrl+C 停止所有服务"
-
-# 等待退出，清理后台进程
-cleanup() {
-    echo ""
-    echo -e "${YELLOW}正在停止服务...${NC}"
-    kill $SERVER_PID 2>/dev/null
-    kill $DAEMON_PID 2>/dev/null
-    echo -e "${GREEN}已停止${NC}"
-}
-trap cleanup EXIT INT TERM
-
-wait
