@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>语音录入设置 - 局域网手机/电脑</title>
+    <style>
+      :root {
+        --bg: #f4efe7; --panel: #fffaf3; --ink: #172126; --muted: #5f6b73;
+        --line: #d7cbbd; --accent: #0f766e; --accent-strong: #115e59;
+        --ok: #16a34a; --warn: #d97706; --err: #dc2626;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; font-family: "Noto Sans CJK SC", "PingFang SC", system-ui, sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, #fff2cf 0, transparent 28%),
+          radial-gradient(circle at bottom right, #d7f4ef 0, transparent 32%),
+          var(--bg);
+      }
+      .wrap { max-width: 780px; margin: 0 auto; padding: 32px 20px 48px; }
+      .header { display: flex; align-items: center; justify-content: space-between; }
+      h1 { margin: 0; font-size: 30px; }
+      .back-btn {
+        display: inline-flex; align-items: center; gap: 6px; padding: 8px 18px;
+        border: 1px solid var(--line); border-radius: 14px; background: white;
+        color: var(--muted); font: inherit; font-size: 14px; cursor: pointer; text-decoration: none;
+      }
+      .back-btn:hover { border-color: var(--accent); color: var(--accent); }
+      .sub { color: var(--muted); margin: 6px 0 24px; }
+      .panel {
+        background: var(--panel); border: 1px solid var(--line); border-radius: 20px;
+        padding: 22px 24px; box-shadow: 0 12px 40px rgba(23,33,38,0.06); margin-bottom: 18px;
+      }
+      h2 { font-size: 17px; margin: 0 0 14px; }
+      .entry { display: flex; gap: 20px; align-items: center; padding: 14px 0; border-bottom: 1px solid #f0ece4; flex-wrap: wrap; }
+      .entry:last-child { border-bottom: none; }
+      .qr { width: 168px; height: 168px; border-radius: 12px; background: white; border: 1px solid var(--line); flex-shrink: 0; }
+      .entry-info { flex: 1; min-width: 240px; }
+      .ip { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
+      .url { font-family: ui-monospace, monospace; font-size: 13px; color: var(--accent-strong); word-break: break-all; background: #f0ece4; padding: 8px 10px; border-radius: 8px; }
+      .copy-btn { margin-top: 8px; padding: 6px 14px; border: none; border-radius: 8px; background: var(--accent); color: white; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+      .steps { line-height: 1.9; color: var(--ink); font-size: 14px; padding-left: 20px; }
+      .warn-box { background: #fef6e7; border: 1px solid #f0d9a8; border-radius: 12px; padding: 12px 16px; font-size: 13px; color: #7a5a12; line-height: 1.6; }
+      .empty { color: var(--muted); font-size: 14px; }
+      code { background: #eee6d8; padding: 1px 6px; border-radius: 5px; font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="header">
+        <h1>📱 局域网语音录入</h1>
+        <a class="back-btn" href="/setup">← 返回设置</a>
+      </div>
+      <p class="sub">手机或其他电脑扫码打开录音页，说的话会输入到<b>这台电脑当前的光标处</b>。</p>
+
+      <div class="panel">
+        <h2>使用步骤</h2>
+        <ol class="steps">
+          <li>确保手机 / 其他设备与这台电脑<b>连同一个 WiFi / 局域网</b>。</li>
+          <li>用手机<b>扫描下方二维码</b>（或手动输入网址）。</li>
+          <li>首次打开手机会提示<b>“证书不安全 / 连接不是私密”</b>——这是本机自签证书，
+              点<b>“高级 → 继续前往”</b>即可（局域网自用，安全）。</li>
+          <li>在手机上<b>按住麦克风说话</b>，松开即自动转写并输入到电脑。</li>
+          <li>输入前请把电脑焦点放在目标输入框（聊天框 / 文档等）。</li>
+        </ol>
+      </div>
+
+      <div class="panel">
+        <h2>扫码入口</h2>
+        <div id="entries"><p class="empty">加载中…</p></div>
+      </div>
+
+      <div class="panel">
+        <div class="warn-box">
+          🔒 <b>安全说明</b>：此入口带专属访问令牌，仅持有二维码链接者可录入。
+          令牌保存在本机 <code>.web_input_token</code>。若二维码疑似泄露，删除该文件并重启服务即可刷新。
+          装软件 / 删模型 / 改配置等危险操作<b>仅本机可用</b>，局域网无法访问。
+        </div>
+      </div>
+    </div>
+
+    <script>
+      async function load() {
+        const box = document.getElementById("entries");
+        try {
+          const r = await fetch("/api/web_input/config");
+          const data = await r.json();
+          if (!data.entries || !data.entries.length) {
+            box.innerHTML = '<p class="empty">未检测到局域网 IP。请确认这台电脑已连接 WiFi / 有线网络。</p>';
+            return;
+          }
+          box.innerHTML = "";
+          data.entries.forEach((e) => {
+            const div = document.createElement("div");
+            div.className = "entry";
+            const qr = e.qr
+              ? `<img class="qr" src="${e.qr}" alt="二维码" />`
+              : `<div class="qr" style="display:flex;align-items:center;justify-content:center;font-size:12px;color:#999;text-align:center;padding:10px;">未安装 qrcode<br/>请手动输入网址</div>`;
+            div.innerHTML = qr +
+              `<div class="entry-info">
+                 <div class="ip">网卡 ${e.ip}</div>
+                 <div class="url">${e.url}</div>
+                 <button class="copy-btn" data-url="${e.url}">复制网址</button>
+               </div>`;
+            box.appendChild(div);
+          });
+          box.querySelectorAll(".copy-btn").forEach((b) => {
+            b.addEventListener("click", () => {
+              navigator.clipboard.writeText(b.dataset.url).then(() => {
+                b.textContent = "已复制 ✓";
+                setTimeout(() => (b.textContent = "复制网址"), 1500);
+              });
+            });
+          });
+        } catch (e) {
+          box.innerHTML = '<p class="empty">加载失败：' + e.message + "</p>";
+        }
+      }
+      load();
+    </script>
+  </body>
+</html>

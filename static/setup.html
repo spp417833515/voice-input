@@ -158,6 +158,14 @@
         color: var(--accent);
         box-shadow: 0 2px 8px rgba(15,118,110,0.12);
       }
+      .page-nav { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
+      .nav-link {
+        display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px;
+        border: 1px solid var(--line); border-radius: 12px; background: white;
+        color: var(--muted); text-decoration: none; font-size: 14px;
+        transition: border-color .12s, color .12s;
+      }
+      .nav-link:hover { border-color: var(--accent); color: var(--accent); }
       .tab-content { display: none; animation: tabFadeIn 250ms ease; }
       .tab-content.active { display: block; }
       @keyframes tabFadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
@@ -168,11 +176,20 @@
       <div class="header">
         <h1>语音输入设置</h1>
       </div>
-      <p class="sub">管理语音识别模型、快捷键和系统工具。</p>
+      <p class="sub">管理语音识别模型、快捷键与系统工具。</p>
 
-      <!-- Tab 导航 -->
+      <!-- 跨页面导航 -->
+      <div class="page-nav">
+        <a class="nav-link" href="/voice_setup">📱 手机/局域网录入</a>
+        <a class="nav-link" href="/api_docs">🔌 API 接口</a>
+        <a class="nav-link" href="/history">🕘 历史记录</a>
+      </div>
+
+      <!-- 本页标签导航 -->
       <div class="tab-bar">
-        <button class="tab-btn active" onclick="switchTab('voice')" id="tab-voice">🎤 语音设置</button>
+        <button class="tab-btn active" onclick="switchTab('model')" id="tab-model">🎤 模型</button>
+        <button class="tab-btn" onclick="switchTab('hotkey')" id="tab-hotkey">⌨️ 快捷键</button>
+        <button class="tab-btn" onclick="switchTab('translate')" id="tab-translate">🌐 翻译</button>
         <button class="tab-btn" onclick="switchTab('tools')" id="tab-tools">🔧 系统工具</button>
       </div>
 
@@ -187,8 +204,8 @@
         <div id="pullLog"></div>
       </div>
 
-      <!-- Tab 1: 语音设置 -->
-      <div class="tab-content active" id="panel-voice">
+      <!-- Tab: 模型（Whisper + 关键词） -->
+      <div class="tab-content active" id="panel-model">
         <!-- ========== Whisper ========== -->
         <h2>Whisper 语音识别模型</h2>
         <div class="panel" style="margin-bottom:12px">
@@ -222,6 +239,10 @@
           <div id="keywordsSaved" style="margin-top:8px;font-size:13px;color:var(--ok);display:none">已保存</div>
         </div>
 
+      </div>
+
+      <!-- Tab: 快捷键 -->
+      <div class="tab-content" id="panel-hotkey">
         <!-- ========== 快捷键设置 ========== -->
         <h2>快捷键设置</h2>
         <div class="panel">
@@ -246,6 +267,10 @@
           <div id="hotkeysSaved" style="margin-top:8px;font-size:13px;color:var(--ok);display:none"></div>
         </div>
 
+      </div>
+
+      <!-- Tab: 翻译（截图翻译 + 百度） -->
+      <div class="tab-content" id="panel-translate">
         <!-- ========== 截图翻译设置 ========== -->
         <h2>截图翻译设置</h2>
         <div class="panel">
@@ -410,6 +435,7 @@
                 ${installed && !isActive ? `<button class="btn sm" onclick="setWhisperModel('${m.name}')">切换使用</button>` : ""}
                 ${isActive && !installed ? `<button class="btn sm" id="btn-${cardId}" onclick="downloadAndSetWhisper('${m.name}','${cardId}')">立即下载</button>` : ""}
                 ${isActive && installed ? '<button class="btn sm active-model">使用中 ✓</button>' : ""}
+                ${installed && !isActive ? `<button class="btn sm danger" onclick="deleteWhisperModel('${m.name}')">删除</button>` : ""}
               </div>
             </div>`;
         }).join("");
@@ -481,6 +507,36 @@
 
           // Model cards
           renderModelCards(TEXT_MODELS, "textModels", "ollama_model");
+
+          // 动态添加已安装但不在预定义列表中的 Ollama 模型
+          const predefinedNames = TEXT_MODELS.map(m => m.name);
+          const extraModels = installedModels
+            .filter(name => !predefinedNames.some(p => name.startsWith(p.split(":")[0])))
+            .map(name => ({ name, size: "—", desc: "自定义安装的模型" }));
+          if (extraModels.length > 0) {
+            const container = document.getElementById("textModels");
+            container.innerHTML += extraModels.map(m => {
+              const isActive = currentConfig.ollama_model === m.name;
+              const cardId = "card-" + m.name.replace(/[:.]/g, "-");
+              const cardClass = isActive ? "is-active" : "is-installed";
+              return `
+                <div class="model-card ${cardClass}" id="${cardId}">
+                  <div class="mc-head">
+                    <span class="mc-name">${m.name}</span>
+                    <span class="mc-status installed"><span class="status-dot"></span>已安装</span>
+                  </div>
+                  <div class="mc-desc">${m.desc}</div>
+                  <div class="mc-meta">
+                    ${isActive ? '<span class="tag" style="background:#dcfce7;color:#166534">当前使用</span>' : ""}
+                  </div>
+                  <div class="mc-actions">
+                    ${!isActive ? `<button class="btn sm" onclick="setModel('${m.name}','ollama_model')">切换使用</button>` : ""}
+                    ${isActive ? '<button class="btn sm active-model">使用中 ✓</button>' : ""}
+                    ${!isActive ? `<button class="btn sm danger" onclick="deleteModel('${m.name}')">删除</button>` : ""}
+                  </div>
+                </div>`;
+            }).join("");
+          }
 
           // Whisper
           document.getElementById("whisperDot").className = "dot " + (d.whisper.downloaded ? "ok" : "warn");
@@ -652,6 +708,27 @@
           }
         } catch (e) {
           log(`❌ 删除失败: ${e.message}`);
+        }
+        await runCheck();
+      }
+
+      async function deleteWhisperModel(name) {
+        if (!confirm(`确定要删除 Whisper 模型 ${name} 吗？删除后需要重新下载。`)) return;
+        wlog(`正在删除 ${name}…`);
+        try {
+          const resp = await fetch("/api/setup/delete_whisper", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: "model=" + encodeURIComponent(name),
+          });
+          const d = await resp.json();
+          if (resp.ok) {
+            wlog(`✅ Whisper 模型 ${name} 已删除`);
+          } else {
+            wlog(`❌ 删除失败: ${d.detail || JSON.stringify(d)}`);
+          }
+        } catch (e) {
+          wlog(`❌ 删除失败: ${e.message}`);
         }
         await runCheck();
       }

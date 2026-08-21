@@ -1,0 +1,13 @@
+{
+  "brief": "防御纵深: 统一退出清理 + atexit/finally 强制释放 + 空闲 watchdog 自愈 + 浮窗 grab 硬超时",
+  "现状逻辑流程图": "flowchart TD\n  A[\"_type_text 注入: uinput 按下 Ctrl(+Shift)\"] -->|正常| B[\"finally: _force_clear_uinput_mods()\"]\n  A -->|进程被 Ctrl-C/异常打断, finally 未走| C{{\"Ctrl/Super 卡在按下态\"}}\n  C --> D[\"Synergy 注入的每个键都变 Ctrl+键 = 键盘全死\"]\n  E[\"截图浮窗 _grab_pointer: seat.grab(ALL_POINTING)\"] -->|加载态无超时, API 卡死| F{{\"pointer grab 永不释放\"}}\n  F --> G[\"鼠标被圈住\"]\n  D -.->|只能等下次成功注入/重启| H[\"偶发自愈\"]\n  G -.-> H",
+  "目标逻辑流程图": "flowchart TD\n  S1[\"main: 注册 SIGTERM/SIGINT/SIGHUP → Gtk.main_quit\"] --> S2[\"atexit.register(_panic_release_all)\"]\n  S2 --> S3[\"GLib.timeout_add(2000, _idle_safety_watchdog)\"]\n  S3 --> W{\"空闲(无录音&无浮窗)?\"}\n  W -->|是| P[\"_panic_release_all(): 释放 uinput 修饰键 + seat.ungrab()\"]\n  P -->|全幂等, 不扰真实按键| W\n  OV[\"TranslationOverlay.__init__\"] --> T[\"GLib.timeout_add(30000, _auto_close) 硬超时\"]\n  T --> DST[\"_on_destroy: ungrab + 清 _max_life_id\"]",
+  "数据源说明": "uinput 修饰键释放依赖内核语义: release 未按下的键 = no-op(input core 丢弃), 故 _force_clear_uinput_mods 可安全无条件调用, 不会取消用户经 Synergy 注入的真实 Ctrl。seat.ungrab() 仅释放本客户端持有的 grab, 无 grab 时为 no-op。两者皆幂等, 是 watchdog 周期调用安全的前提。",
+  "执行细节": [
+    "改动1 @ daemon.py ~516 后: 新增 _panic_release_all()(释放 uinput 修饰键 + seat 指针 grab) 与 _idle_safety_watchdog()(空闲时调用前者)",
+    "改动2 @ TranslationOverlay.__init__: 新增 self._max_life_id; 末尾加 GLib.timeout_add(30000, self._auto_close) 硬性最大存活",
+    "改动3 @ _on_destroy: 清理 _max_life_id",
+    "改动4 @ main(): SIGTERM→扩为 SIGTERM/SIGINT/SIGHUP; atexit.register(_panic_release_all); 启动 watchdog; finally 内先调用 _panic_release_all() 再 cleanup/close"
+  ],
+  "红线核对": "§5.1 非回退兜底而是根因缺口补齐; §5.2 不在错误基石叠补丁(grabber 本身无需改); §5.6 手术刀: 仅动生命周期/清理路径, 不改注入与识别核心逻辑, 匹配既有 try/except/finally 风格"
+}

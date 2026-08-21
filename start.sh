@@ -83,7 +83,7 @@ import_session_env
 
 # ---------- 1. 检查 / 创建 venv ----------
 if [ ! -f "$VENV/bin/python3" ]; then
-    echo -e "${YELLOW}[1/4] 创建虚拟环境...${NC}"
+    echo -e "${YELLOW}  创建虚拟环境...${NC}"
     python3 -m venv --system-site-packages "$VENV"
 fi
 
@@ -109,24 +109,16 @@ if ! curl -sf http://127.0.0.1:11434/api/tags &>/dev/null; then
 fi
 
 OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:7b}"
-if ! curl -sf http://127.0.0.1:11434/api/tags | python3 -c "
-import sys, json
+if ! curl -sf http://127.0.0.1:11434/api/tags | OLLAMA_MODEL="$OLLAMA_MODEL" python3 -c "
+import sys, json, os
+model = os.environ['OLLAMA_MODEL']
 models = [m['name'] for m in json.load(sys.stdin).get('models', [])]
-sys.exit(0 if any('${OLLAMA_MODEL}'.split(':')[0] in m for m in models) else 1)
+sys.exit(0 if any(model.split(':')[0] in m for m in models) else 1)
 " 2>/dev/null; then
     echo -e "${YELLOW}  拉取模型 $OLLAMA_MODEL...${NC}"
     ollama pull "$OLLAMA_MODEL"
 fi
 
-VISION_MODEL="${VISION_MODEL:-moondream:1.8b}"
-if ! curl -sf http://127.0.0.1:11434/api/tags | python3 -c "
-import sys, json
-models = [m['name'] for m in json.load(sys.stdin).get('models', [])]
-sys.exit(0 if any('${VISION_MODEL}'.split(':')[0] in m for m in models) else 1)
-" 2>/dev/null; then
-    echo -e "${YELLOW}  拉取视觉模型 $VISION_MODEL（截图翻译需要）...${NC}"
-    ollama pull "$VISION_MODEL"
-fi
 echo -e "${GREEN}  Ollama 就绪 ✓${NC}"
 
 ensure_services_installed

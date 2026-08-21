@@ -1,0 +1,24 @@
+{
+  "brief": "松开快捷键后，组合不得保持半按下，后续按键不得再触发录音/截图/重复输入",
+  "created_at": "2026-08-16",
+  "用户原始描述": "修复快捷键会卡住的BUG",
+  "澄清过程": [
+    {
+      "问": "卡住是松开后还在触发，还是 Ctrl 粘住，还是按了没反应",
+      "答": "松开后还在触发（推荐·一起修）"
+    }
+  ],
+  "锁定的真实目的": "用户松开 Ctrl+Alt+Z / Ctrl+Alt+D / Ctrl+Shift+Z 之后，热键必须结束；再按别的键不得再次录音、弹截图或重复输入。",
+  "已锁决策": [
+    "命中契约：只有刚才按下的那颗键是 trigger 才可能命中（不能拿账本里的陈 trigger 去配后续任意键）",
+    "注入回流：只忽略自家 uinput（设备名 ollama-voice-input）的 raw 事件；不能忽略 XTEST（Synergy 走这条）",
+    "非目标：不改快捷键绑定、不重写三级 grabber、不在本任务修「Ctrl 粘在系统层」的 B 路"
+  ],
+  "代码层授权": "sourceid 解析方式、_inject_until 仅作「找不到 uinput 设备」的回退、测试放 tests/ 均由执行阶段自定",
+  "涉及节点": [
+    "XInputHotkeyGrabber._handle_press",
+    "XInputHotkeyGrabber._handle_release",
+    "XInputHotkeyGrabber._match_combo",
+    "EvdevHotkeyGrabber._check_press / _match_combo"
+  ]
+}

@@ -7,9 +7,14 @@ StartLimitIntervalSec=60
 [Service]
 Type=simple
 WorkingDirectory=/home/spp/桌面/ollama-voice-input
+Environment=PYTHONUNBUFFERED=1
 Environment=LD_LIBRARY_PATH=/home/spp/桌面/ollama-voice-input/.venv/lib/python3.12/site-packages/nvidia/cublas/lib:/home/spp/桌面/ollama-voice-input/.venv/lib/python3.12/site-packages/nvidia/cudnn/lib:/home/spp/桌面/ollama-voice-input/.venv/lib/python3.12/site-packages/nvidia/cuda_nvrtc/lib
 ExecStartPre=-/usr/bin/fuser -k -TERM 17945/tcp
-ExecStart=/home/spp/桌面/ollama-voice-input/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 17945
+# 证书缺失时自动生成（手机浏览器需 https 才能网页内录音）
+ExecStartPre=/bin/bash -c 'test -f /home/spp/桌面/ollama-voice-input/certs/cert.pem || /home/spp/桌面/ollama-voice-input/gen_cert.sh'
+# 绑定 0.0.0.0 + https 供局域网手机/其他电脑访问录音页；危险接口由 app.py 中间件限本机 +
+# 网页录入接口用 token 鉴权，未授权者即使连上端口也拿不到注入/装软件能力。
+ExecStart=/home/spp/桌面/ollama-voice-input/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 17945 --ssl-keyfile /home/spp/桌面/ollama-voice-input/certs/key.pem --ssl-certfile /home/spp/桌面/ollama-voice-input/certs/cert.pem
 Restart=on-failure
 RestartSec=3
 

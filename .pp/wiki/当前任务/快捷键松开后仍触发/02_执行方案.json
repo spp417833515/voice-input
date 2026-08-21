@@ -1,0 +1,63 @@
+{
+  "brief": "热键只在 trigger 当下按下时命中；注入回流按 uinput sourceid 过滤，不再用时间窗吞掉用户抬起",
+  "目的锚点": "松开后不再触发",
+  "现状逻辑流程图": "flowchart TD\n  Raw[\"_on_xlib_event → _handle_press(kc)\"] --> Inj{\"_inject_until 未过?\"}\n  Inj -->|是| Drop[\"press/release 全丢 → 用户松手也丢\"]\n  Inj -->|否| Acc[\"_pressed.add(kc)\"]\n  Acc --> M[\"_match_combo(voice/screen/repeat)\"]\n  M --> T{\"_pressed 里有 trigger?\"}\n  T -->|陈 trigger 还在| Fire[\"任意新键都可能再命中\"]\n  T -->|没有| Skip[\"不触发\"]",
+  "目标逻辑流程图": "flowchart TD\n  Raw[\"_on_xlib_event\"] --> Src{\"sourceid ∈ ollama-voice-input?\"}\n  Src -->|是| Ign[\"忽略注入回流\"]\n  Src -->|否| Rel{\"RawKeyRelease?\"}\n  Rel -->|是| Book[\"_pressed.discard + 录音则 _do_release\"]\n  Rel -->|否| Press[\"_handle_press(kc)\"]\n  Press --> Gate{\"_match_combo(combo, pressed_kc=kc)\\nkc == trigger ?\"}\n  Gate -->|否| No[\"不命中\"]\n  Gate -->|是| Mods[\"query_keymap 修饰键 live 且非幽灵\"]\n  Mods -->|是| Fire[\"_on_voice_press / screenshot / _on_repeat\"]\n  Mods -->|否| No",
+  "数据源说明": "命中判定：当前事件 keycode + query_keymap 修饰键位图。注入过滤：XI2 sourceid ↔ 设备名 ollama-voice-input。_pressed 只做自动重复与录音抬起，不再当 trigger 权威源。",
+  "plan_dryrun": [
+    {
+      "场景": "用完 Ctrl+Shift+Z，松手发生在粘贴期间",
+      "推演": "以前 _inject_until 吞掉 Z 抬起，Z 留在 _pressed，之后任意 Ctrl+Shift+键再触发重复",
+      "结果": "现改为 uinput sourceid 过滤，用户抬起照常出账；且只有再按下 Z 才可能命中"
+    },
+    {
+      "场景": "键盘是 Synergy/XTEST",
+      "推演": "若按设备一刀切忽略 XTEST，热键全死",
+      "结果": "只忽略名称为 ollama-voice-input 的 sourceid，XTEST 保留"
+    },
+    {
+      "场景": "录音中网页粘贴注入 Ctrl+V",
+      "推演": "若把「_pressed 里的键的抬起」都当作用户抬起，uinput 的 Ctrl↑ 会误停录音",
+      "结果": "注入事件在进 _handle_* 之前按 sourceid 丢掉，不会改账本"
+    },
+    {
+      "场景": "uinput 未进 XI 设备表（创建失败/尚未挂上）",
+      "推演": "忽略集为空，回流可能进账本",
+      "结果": "回退：_inject_until 仍吞 press；release 只放行三个 trigger，不放行 Ctrl/V"
+    },
+    {
+      "场景": "语音与重复共用 trigger Z",
+      "推演": "仍是 if voice elif repeat，Ctrl+Alt+Shift+Z 先走语音",
+      "结果": "本任务不改，已有行为"
+    }
+  ],
+  "复用判定": [
+    {
+      "能力": "XI2 raw 监听 / _match_combo / query_keymap 幽灵修饰键",
+      "结论": "复用现有 XInputHotkeyGrabber 与 EvdevHotkeyGrabber，不新建 grabber"
+    },
+    {
+      "能力": "按设备名查 XI sourceid",
+      "结论": "项目内无现成函数；新建模块级 _xi_source_ids_by_name(dpy, name) 一行调用"
+    }
+  ],
+  "推翻清单": [
+    {
+      "旧结论": "用 _inject_until 时间窗忽略全部 raw 事件，避免注入回流",
+      "证据": "时间窗同时吞掉用户真实抬起，正是松开后仍触发的制造者；用户键盘可能是 XTEST，不能按设备忽略全部注入源",
+      "现方案": "只滤自家 uinput sourceid；时间窗降为找不到该设备时的回退"
+    },
+    {
+      "旧结论": "trigger 用 _pressed 即可（_handle_press 入口键一定在集合里）",
+      "证据": "_match_combo 在每一次任意键按下时对三个组合都跑，陈 trigger 会让后续非 trigger 键命中",
+      "现方案": "必须 pressed_kc == combo.trigger"
+    }
+  ],
+  "执行细节": [
+    "逻辑层1 daemon.py XInputHotkeyGrabber：解析并刷新 ollama-voice-input 的 sourceid；_on_xlib_event 先滤；_match_combo(combo, pressed_kc)",
+    "逻辑层2 daemon.py EvdevHotkeyGrabber：_check_press 传入当前 code，_match_combo 同样要求 trigger",
+    "UI层：无",
+    "验收：tests/hotkey/test_hotkey_no_sticky.py 打真实 X + 真实类，不 mock 命中契约"
+  ],
+  "不涉及层": "UI层=无"
+}

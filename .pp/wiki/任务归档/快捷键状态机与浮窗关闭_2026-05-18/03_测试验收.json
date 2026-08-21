@@ -1,0 +1,59 @@
+{
+  "task_name": "快捷键状态机与浮窗关闭",
+  "for_plan_file": "02_执行方案.json",
+  "status": "passed",
+  "executed_started_at": "2026-05-18T18:51:17",
+  "executed_finished_at": "2026-05-18T19:30:00",
+  "execution_order": ["1", "2.1", "2.2"],
+  "leaf_results": [
+    {
+      "id": "1",
+      "real_test_command": "python3 /tmp/test_match_combo_query.py",
+      "expected": "exit code 0 + 输出含「PASS: query_keymap 路径任意键不触发 screen combo」",
+      "actual_exit_code": 0,
+      "actual_output_snippet": "PASS: query_keymap 路径任意键不触发 screen combo",
+      "result": "passed",
+      "retry_count": 0
+    },
+    {
+      "id": "2.1",
+      "real_test_command": "python3 -m py_compile daemon.py && grep -nE '_auto_close_id\\s*=\\s*GLib\\.timeout_add|_auto_close_id\\s*=\\s*0|GLib\\.source_remove\\(self\\._auto_close_id' daemon.py | wc -l | grep -q '^3$' && echo PASS",
+      "expected": "exit code 0 + 输出 PASS (3 处锚点全在: 注册 / 初始化 / 清理)",
+      "actual_exit_code": 0,
+      "actual_output_snippet": "PASS",
+      "result": "passed",
+      "retry_count": 0
+    },
+    {
+      "id": "2.2",
+      "real_test_command": "python3 -m py_compile daemon.py && grep -nE 'def _close_translation_overlay|GLib\\.idle_add\\(_close_translation_overlay\\)' daemon.py | wc -l | grep -q '^2$' && echo PASS",
+      "expected": "exit code 0 + 输出 PASS (函数定义 + _handle_press 内调用 共 2 处锚点)",
+      "actual_exit_code": 0,
+      "actual_output_snippet": "PASS",
+      "result": "passed",
+      "retry_count": 0
+    }
+  ],
+  "final_oneliner_result": {
+    "command": "python3 -m py_compile daemon.py && grep -q 'query_keymap' daemon.py && grep -q '_auto_close_id' daemon.py && grep -q '_close_translation_overlay' daemon.py && python3 /tmp/test_match_combo_query.py && python3 /tmp/test_overlay_close_paths.py",
+    "exit_code": 0,
+    "result": "passed"
+  },
+  "self_check": {
+    "no_wheel": true,
+    "decoupled": true,
+    "root_cause_fixed": true,
+    "single_responsibility": true,
+    "blackbox_callable": true,
+    "passed_count": 5
+  },
+  "archived_to": "任务归档/快捷键状态机与浮窗关闭_2026-05-18/",
+  "deviations_from_plan": [
+    {
+      "field": "acceptance_oneliner grep 关键字",
+      "plan": "request_overlay_close|_pending_overlay_close (plan 阶段占位符, 未钉死 helper 名)",
+      "actual": "_close_translation_overlay (与 task 2.2 description 内定的实现名一致)",
+      "justification": "task 2.2 description 已写明实现名为 _close_translation_overlay; oneliner 中的占位符是 plan 时遗留, 不影响 task 内部约束. 执行时同步修正 02.acceptance_oneliner 与实现一致."
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "brief": "无 UI 模拟真实卡死场景, 验证残留修饰键/指针 grab 均能自愈, 且不误伤真实按键",
+  "验收标准": [
+    "标准1: 模拟注入中途中断留下 Ctrl 按下态后, watchdog 在 ~2s 内清除, 后续按键不再被 Ctrl 污染",
+    "标准2: _force_clear_uinput_mods 对'本设备未按下的修饰键'调用 = 无 X 事件产生(不取消用户真实 Ctrl)",
+    "标准3: 加载态浮窗超过 30s 自动销毁并释放 pointer grab",
+    "标准4: 前台运行时 Ctrl-C(SIGINT) / 终端关闭(SIGHUP) 均触发干净退出, _panic_release_all 执行",
+    "标准5: daemon.py 通过 py_compile, 改动不破坏既有 import 与启动流程"
+  ],
+  "真实无UI验收用例": [
+    {"用例": "C1 卡键自愈", "操作序列": "uinput 写 KEY_LEFTCTRL=1 syn → 不释放 → 等待 2.5s 观察 watchdog 调用 _panic_release_all → 读 /sys 或 evtest 确认 LEFTCTRL 已释放", "预期": "2.5s 内 LEFTCTRL 回到 0"},
+    {"用例": "C2 幂等不误伤", "操作序列": "本进程 uinput 从不按 Ctrl, 直接调 _force_clear_uinput_mods → evtest 监听本 uinput 设备", "预期": "无任何 KEY_LEFTCTRL release 事件输出(内核丢弃)"},
+    {"用例": "C3 浮窗硬超时", "操作序列": "构造 TranslationOverlay 停在加载态不喂结果 → 计时", "预期": "30s 时自动 destroy, seat 无残留 grab"},
+    {"用例": "C4 信号清理", "操作序列": "前台运行 daemon → 发送 SIGINT/SIGHUP", "预期": "进入 finally, _panic_release_all + cleanup + uinput.close 全部执行, 进程干净退出"},
+    {"用例": "C5 语法/启动", "操作序列": "python -m py_compile daemon.py; 重启 user service 看启动日志", "预期": "编译通过, 守护进程正常打印启动横幅与 grabber 选择"}
+  ]
+}

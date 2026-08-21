@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <title>语音录入 - Ollama Voice Input</title>
+    <style>
+      :root {
+        --bg: #f4efe7; --panel: #fffaf3; --ink: #172126; --muted: #5f6b73;
+        --line: #d7cbbd; --accent: #0f766e; --accent-strong: #115e59;
+        --ok: #16a34a; --err: #dc2626;
+      }
+      * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+      body {
+        margin: 0; min-height: 100vh;
+        font-family: "Noto Sans CJK SC", "PingFang SC", system-ui, sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, #fff2cf 0, transparent 30%),
+          radial-gradient(circle at bottom right, #d7f4ef 0, transparent 34%),
+          var(--bg);
+        display: flex; flex-direction: column; align-items: center;
+        padding: 24px 18px 40px;
+      }
+      h1 { font-size: 22px; margin: 8px 0 2px; }
+      .sub { color: var(--muted); font-size: 13px; margin: 0 0 22px; text-align: center; }
+      .card {
+        background: var(--panel); border: 1px solid var(--line); border-radius: 22px;
+        padding: 26px 22px; box-shadow: 0 12px 40px rgba(23,33,38,0.08);
+        width: 100%; max-width: 420px; text-align: center;
+      }
+      .mic-btn {
+        width: 168px; height: 168px; border-radius: 50%; border: none;
+        margin: 6px auto 18px; display: flex; align-items: center; justify-content: center;
+        flex-direction: column; gap: 8px; cursor: pointer;
+        background: linear-gradient(145deg, #14b8a6, #0f766e);
+        color: white; font-size: 17px; font-weight: 700;
+        box-shadow: 0 10px 30px rgba(15,118,110,0.35);
+        transition: transform 120ms, box-shadow 120ms, background 200ms;
+        user-select: none; touch-action: manipulation;
+      }
+      .mic-btn:active { transform: scale(0.96); }
+      .mic-btn.recording {
+        background: linear-gradient(145deg, #ef4444, #b91c1c);
+        box-shadow: 0 0 0 0 rgba(239,68,68,0.5); animation: pulse 1.3s infinite;
+      }
+      @keyframes pulse {
+        0% { box-shadow: 0 0 0 0 rgba(239,68,68,0.5); }
+        70% { box-shadow: 0 0 0 24px rgba(239,68,68,0); }
+        100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
+      }
+      .mic-icon { font-size: 46px; }
+      .status { min-height: 22px; font-size: 14px; color: var(--muted); margin: 6px 0 4px; }
+      .status.ok { color: var(--ok); font-weight: 600; }
+      .status.err { color: var(--err); font-weight: 600; }
+      .result {
+        margin-top: 14px; padding: 14px 16px; border-radius: 14px;
+        background: #fff; border: 1px solid var(--line); text-align: left;
+        font-size: 15px; line-height: 1.5; min-height: 20px; word-break: break-word;
+        display: none;
+      }
+      .result.show { display: block; }
+      .hint { margin-top: 18px; font-size: 12px; color: var(--muted); line-height: 1.6; }
+      .fallback { margin-top: 16px; display: none; }
+      .fallback.show { display: block; }
+      .file-btn {
+        display: inline-block; padding: 12px 20px; border-radius: 14px;
+        background: var(--accent); color: white; font-weight: 700; font-size: 15px;
+        cursor: pointer; border: none;
+      }
+      input[type=file] { display: none; }
+      .banner {
+        width: 100%; max-width: 420px; margin-bottom: 14px; padding: 10px 14px;
+        border-radius: 12px; font-size: 13px; text-align: center; display: none;
+      }
+      .banner.err { display: block; background: #fde8e8; color: var(--err); border: 1px solid #f5c2c2; }
+      .hotkey-row {
+        margin-top: 10px; font-size: 12px; color: var(--muted);
+        display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap;
+      }
+      .key-cap {
+        display: inline-block; padding: 2px 10px; border-radius: 8px; border: 1px solid var(--line);
+        background: #fff; font-weight: 700; color: var(--ink); font-family: ui-monospace, monospace;
+      }
+      .link-btn { background: none; border: none; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; padding: 0; }
+      .history {
+        width: 100%; max-width: 420px; margin-top: 18px;
+        background: var(--panel); border: 1px solid var(--line); border-radius: 18px;
+        padding: 16px 18px; box-shadow: 0 12px 40px rgba(23,33,38,0.06);
+      }
+      .history-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+      .history-head h2 { font-size: 15px; margin: 0; }
+      .hist-item {
+        text-align: left; width: 100%; border: 1px solid var(--line); background: #fff;
+        border-radius: 12px; padding: 10px 12px; margin-top: 8px; cursor: pointer;
+        font: inherit; font-size: 14px; color: var(--ink); line-height: 1.4;
+        transition: border-color 120ms, transform 80ms;
+      }
+      .hist-item:active { transform: scale(0.98); }
+      .hist-item:hover { border-color: var(--accent); }
+      .hist-meta { display: flex; justify-content: space-between; gap: 8px; margin-top: 6px; font-size: 11px; color: var(--muted); }
+      .hist-badge { padding: 0 6px; border-radius: 6px; background: #eef4f3; color: var(--accent-strong); }
+      .hist-empty { color: var(--muted); font-size: 13px; text-align: center; padding: 12px 0; }
+    </style>
+  </head>
+  <body>
+    <h1>🎤 语音录入</h1>
+    <p class="sub">录音 → 自动转写 → 输入到电脑当前光标处</p>
+
+    <div id="banner" class="banner"></div>
+
+    <div class="card">
+      <button id="micBtn" class="mic-btn" disabled>
+        <span class="mic-icon">🎙️</span>
+        <span id="micText">连接中…</span>
+      </button>
+      <div id="status" class="status">正在校验访问令牌…</div>
+      <div id="result" class="result"></div>
+
+      <div id="fallback" class="fallback">
+        <p class="hint">当前以 http 访问，浏览器禁止网页内录音。<br/>点击下方按钮调用手机系统录音：</p>
+        <label class="file-btn">
+          🎙️ 录音并上传
+          <input id="fileInput" type="file" accept="audio/*" capture="microphone" />
+        </label>
+      </div>
+
+      <div id="hotkeyRow" class="hotkey-row" style="display:none">
+        <span>或按住 <span id="keyCap" class="key-cap">空格</span> 说话</span>
+        <button id="setKeyBtn" class="link-btn">改快捷键</button>
+      </div>
+
+      <p class="hint">
+        提示：按住麦克风说话，松开即上传（或点击开始/停止）。<br/>
+        转写完成后会自动输入到电脑上<b>当前聚焦的窗口</b>。
+      </p>
+    </div>
+
+    <div class="history">
+      <div class="history-head">
+        <h2>🕘 历史输入（点击再次输入）</h2>
+        <button id="refreshHistBtn" class="link-btn">刷新</button>
+      </div>
+      <div id="histList"><div class="hist-empty">加载中…</div></div>
+    </div>
+
+    <script>
+      const params = new URLSearchParams(location.search);
+      const token = params.get("token") || "";
+      const micBtn = document.getElementById("micBtn");
+      const micText = document.getElementById("micText");
+      const statusEl = document.getElementById("status");
+      const resultEl = document.getElementById("result");
+      const fallback = document.getElementById("fallback");
+      const fileInput = document.getElementById("fileInput");
+      const banner = document.getElementById("banner");
+      const hotkeyRow = document.getElementById("hotkeyRow");
+      const keyCap = document.getElementById("keyCap");
+      const setKeyBtn = document.getElementById("setKeyBtn");
+      const histList = document.getElementById("histList");
+      const refreshHistBtn = document.getElementById("refreshHistBtn");
+
+      let mediaRecorder = null, chunks = [], recording = false, language = "zh";
+      let recStartTime = 0;                         // 录音开始时刻，用于最短时长校验
+      let recStart = null, recStop = null;         // 供快捷键调用录音开始/结束
+      let hotkeyCode = localStorage.getItem("voiceHotkeyCode") || "Space";
+      let hotkeyLabel = localStorage.getItem("voiceHotkeyLabel") || "空格";
+      let capturingKey = false;
+
+      function setStatus(msg, cls) {
+        statusEl.textContent = msg;
+        statusEl.className = "status" + (cls ? " " + cls : "");
+      }
+      function showResult(text) {
+        resultEl.textContent = text;
+        resultEl.classList.add("show");
+      }
+
+      async function init() {
+        if (!token) {
+          banner.className = "banner err";
+          banner.textContent = "缺少访问令牌，请从电脑上的「语音录入设置」页扫码进入。";
+          setStatus("无访问令牌", "err");
+          return;
+        }
+        try {
+          const r = await fetch("/api/web_input/info?token=" + encodeURIComponent(token));
+          if (!r.ok) throw new Error("token");
+          const info = await r.json();
+          language = info.language || "zh";
+        } catch (e) {
+          banner.className = "banner err";
+          banner.textContent = "访问令牌无效或已更新，请重新扫码进入。";
+          setStatus("令牌校验失败", "err");
+          return;
+        }
+        // 判断是否支持网页内录音（需安全上下文：https 或 localhost）
+        const canRecord = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.isSecureContext);
+        if (canRecord) {
+          setupLiveRecording();
+        } else {
+          setupFallback();
+        }
+        loadHistory();
+      }
+
+      function setupLiveRecording() {
+        micBtn.disabled = false;
+        micText.textContent = "按住说话";
+        setStatus("就绪");
+        const start = async (ev) => {
+          ev.preventDefault();
+          if (recording) return;
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            chunks = [];
+            mediaRecorder = new MediaRecorder(stream);
+            mediaRecorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+            mediaRecorder.onstop = () => {
+              stream.getTracks().forEach((t) => t.stop());
+              const blob = new Blob(chunks, { type: mediaRecorder.mimeType || "audio/webm" });
+              const dur = (Date.now() - recStartTime) / 1000;
+              // 太短的录音产出的是空/截断 webm，服务端会解码 EOF 失败——直接拦下并提示
+              if (dur < 0.4 || blob.size < 1500) {
+                setStatus("录音太短，请按住多说一会儿再松开", "err");
+                return;
+              }
+              upload(blob);
+            };
+            mediaRecorder.start();
+            recStartTime = Date.now();
+            recording = true;
+            micBtn.classList.add("recording");
+            micText.textContent = "松开结束";
+            setStatus("录音中…");
+          } catch (e) {
+            setStatus("无法访问麦克风：" + e.message, "err");
+          }
+        };
+        const stop = (ev) => {
+          ev.preventDefault();
+          if (!recording || !mediaRecorder) return;
+          recording = false;
+          micBtn.classList.remove("recording");
+          micText.textContent = "按住说话";
+          setStatus("上传转写中…");
+          try { mediaRecorder.stop(); } catch (e) {}
+        };
+        micBtn.addEventListener("mousedown", start);
+        micBtn.addEventListener("touchstart", start, { passive: false });
+        micBtn.addEventListener("mouseup", stop);
+        micBtn.addEventListener("mouseleave", stop);
+        micBtn.addEventListener("touchend", stop, { passive: false });
+
+        // 暴露给键盘快捷键调用（其他电脑用键盘"按住某键说话"）
+        recStart = start;
+        recStop = stop;
+        setupHotkey();
+      }
+
+      function setupHotkey() {
+        hotkeyRow.style.display = "flex";
+        keyCap.textContent = hotkeyLabel;
+        document.addEventListener("keydown", (e) => {
+          if (capturingKey) {
+            e.preventDefault();
+            hotkeyCode = e.code;
+            hotkeyLabel = e.key === " " ? "空格" : (e.key.length === 1 ? e.key.toUpperCase() : e.key);
+            localStorage.setItem("voiceHotkeyCode", hotkeyCode);
+            localStorage.setItem("voiceHotkeyLabel", hotkeyLabel);
+            keyCap.textContent = hotkeyLabel;
+            capturingKey = false;
+            setKeyBtn.textContent = "改快捷键";
+            setStatus("快捷键已设为 " + hotkeyLabel);
+            return;
+          }
+          const tag = (e.target.tagName || "").toLowerCase();
+          if (tag === "input" || tag === "textarea") return;
+          if (e.code === hotkeyCode) {
+            // 对快捷键的每次 keydown（含长按自动重复）都阻止默认行为，
+            // 否则空格会持续把页面向下翻。仅首次(非重复)触发录音开始。
+            e.preventDefault();
+            if (!e.repeat && recStart) recStart(e);
+          }
+        });
+        document.addEventListener("keyup", (e) => {
+          if (e.code === hotkeyCode && recStop) {
+            e.preventDefault();
+            recStop(e);
+          }
+        });
+        setKeyBtn.addEventListener("click", () => {
+          capturingKey = true;
+          setKeyBtn.textContent = "按下想用的键…";
+          setStatus("请按下想用作快捷键的键…");
+        });
+      }
+
+      function setupFallback() {
+        micBtn.style.display = "none";
+        fallback.classList.add("show");
+        setStatus("请使用下方按钮录音", "");
+        fileInput.addEventListener("change", () => {
+          if (fileInput.files && fileInput.files[0]) {
+            setStatus("上传转写中…");
+            upload(fileInput.files[0], fileInput.files[0].name);
+          }
+        });
+      }
+
+      async function upload(blob, filename) {
+        const fd = new FormData();
+        fd.append("audio", blob, filename || "recording.webm");
+        fd.append("token", token);
+        fd.append("language", language);
+        try {
+          const r = await fetch("/api/web_input/submit", { method: "POST", body: fd });
+          const data = await r.json().catch(() => ({}));
+          if (!r.ok) {
+            setStatus("失败：" + (data.detail || r.status), "err");
+            return;
+          }
+          showResult(data.text || "(空)");
+          setStatus("已转写，等待电脑输入…");
+          if (data.job_id) {
+            trackStatus(data.job_id);
+          } else {
+            setStatus("✓ 已提交到电脑", "ok");
+          }
+        } catch (e) {
+          setStatus("网络错误：" + e.message, "err");
+        }
+      }
+
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+      // 轮询电脑端真实注入进度，与电脑状态同步
+      async function trackStatus(jobId) {
+        for (let i = 0; i < 40; i++) {
+          try {
+            const r = await fetch(
+              "/api/web_input/status?token=" + encodeURIComponent(token) +
+              "&job_id=" + encodeURIComponent(jobId)
+            );
+            const s = await r.json();
+            if (s.state === "done") {
+              setStatus("✓ 已输入到电脑" + (s.detail ? "（" + s.detail + "）" : ""), "ok");
+              loadHistory();  // 输入成功后刷新历史
+              return;
+            }
+            if (s.state === "failed") {
+              setStatus("✗ 电脑端未输入：" + (s.detail || "未知原因"), "err");
+              return;
+            }
+            if (s.state === "delivered") setStatus("电脑注入中…");
+            else if (s.state === "queued") setStatus("已转写，等待电脑取走…");
+          } catch (e) { /* 忽略单次轮询错误，继续 */ }
+          await sleep(500);
+        }
+        setStatus("已提交，但未收到电脑确认（电脑端服务是否在运行？）", "err");
+      }
+
+      // ---- 历史输入：查看 + 点击再次输入 ----
+      async function loadHistory() {
+        try {
+          const r = await fetch(
+            "/api/web_input/history?limit=5&token=" + encodeURIComponent(token)
+          );
+          if (!r.ok) return;
+          const data = await r.json();
+          renderHistory(data.records || []);
+        } catch (e) { /* 忽略 */ }
+      }
+
+      function renderHistory(records) {
+        if (!records.length) {
+          histList.innerHTML = '<div class="hist-empty">还没有历史记录</div>';
+          return;
+        }
+        histList.innerHTML = "";
+        const modeLabel = { web: "手机", resend: "重发", raw: "本机", "": "" };
+        records.forEach((rec) => {
+          const btn = document.createElement("button");
+          btn.className = "hist-item";
+          const t = (rec.timestamp || "").replace("T", " ").slice(5, 16);
+          btn.innerHTML =
+            '<div>' + escapeHtml(rec.text) + '</div>' +
+            '<div class="hist-meta"><span class="hist-badge">' +
+            (modeLabel[rec.mode] || rec.mode || "") + '</span><span>' + t + '</span></div>';
+          btn.addEventListener("click", () => resend(rec.text));
+          histList.appendChild(btn);
+        });
+      }
+
+      function escapeHtml(s) {
+        const d = document.createElement("div");
+        d.textContent = s;
+        return d.innerHTML;
+      }
+
+      async function resend(text) {
+        setStatus("重新输入中…");
+        showResult(text);
+        try {
+          const fd = new FormData();
+          fd.append("token", token);
+          fd.append("text", text);
+          const r = await fetch("/api/web_input/resend", { method: "POST", body: fd });
+          const data = await r.json().catch(() => ({}));
+          if (!r.ok) {
+            setStatus("失败：" + (data.detail || r.status), "err");
+            return;
+          }
+          if (data.job_id) trackStatus(data.job_id);
+          else setStatus("✓ 已提交到电脑", "ok");
+        } catch (e) {
+          setStatus("网络错误：" + e.message, "err");
+        }
+      }
+
+      refreshHistBtn.addEventListener("click", loadHistory);
+
+      init();
+    </script>
+  </body>
+</html>

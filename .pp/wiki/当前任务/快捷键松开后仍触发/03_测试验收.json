@@ -1,0 +1,38 @@
+{
+  "brief": "陈 trigger 不得再命中；自家 uinput 回流不得进入 _pressed",
+  "验收标准": [
+    "标准1: _pressed 里残留语音/重复 trigger，当前按下的不是 trigger → _match_combo 为 False",
+    "标准2: 当前按下的就是 trigger，且修饰键位图 live → 可以 True（本机未按修饰键时允许 False，但不得因缺 pressed_kc 参数而误 True）",
+    "标准3: 名为 ollama-voice-input 的 uinput 发出的 Ctrl 按下，经真实 _on_xlib_event 处理后不得进入 _pressed",
+    "标准4: 忽略集为空 + _inject_until 有效时，trigger 的 release 仍能从 _pressed 清除",
+    "标准5: python -m py_compile daemon.py 通过；evdev 路径同样要求当前键是 trigger"
+  ],
+  "实际结果": {
+    "command": ".venv/bin/python3 -m py_compile daemon.py && .venv/bin/python3 tests/hotkey/test_hotkey_no_sticky.py",
+    "exit_code": 0,
+    "output": "PASS: C1 陈 trigger 不命中 / C3 回退仍能松 trigger / C4 evdev 契约 / C2 uinput 不入账 / 快捷键松开后不再误触发",
+    "mutation": "去掉 XInput/evdev 的 pressed_kc 门 → 被挡住；去掉 sourceid 过滤 → C2 红；复原后基线仍绿"
+  },
+  "真实无UI验收用例": [
+    {
+      "用例": "C1 陈 trigger 不命中",
+      "操作序列": "构造真实 XInputHotkeyGrabber，_pressed 放入 voice trigger，对非 trigger 键调 _match_combo(voice, pressed_kc=该键)",
+      "预期": "False"
+    },
+    {
+      "用例": "C2 uinput 不入账",
+      "操作序列": "start() 后用 UInput(name=ollama-voice-input) 发 KEY_LEFTCTRL 按下再抬起，手动泵 _on_xlib_event",
+      "预期": "Control_L 的 X keycode 不在 _pressed"
+    },
+    {
+      "用例": "C3 回退仍能松 trigger",
+      "操作序列": "_ignore_source_ids 清空，_inject_until=now+10，_pressed 含 trigger，_handle_release(trigger)",
+      "预期": "trigger 已不在 _pressed"
+    },
+    {
+      "用例": "C4 evdev 契约",
+      "操作序列": "构造 combo，_pressed_keys 含 trigger+修饰，_match_combo(combo, 非 trigger 键)",
+      "预期": "False"
+    }
+  ]
+}

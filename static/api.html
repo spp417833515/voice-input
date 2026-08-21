@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>API 接口 - Ollama Voice Input</title>
+    <style>
+      :root {
+        --bg: #f4efe7; --panel: #fffaf3; --ink: #172126; --muted: #5f6b73;
+        --line: #d7cbbd; --accent: #0f766e; --accent-strong: #115e59;
+        --ok: #16a34a; --warn: #d97706; --err: #dc2626; --code-bg: #1e2430;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; font-family: "Noto Sans CJK SC", "PingFang SC", system-ui, sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, #fff2cf 0, transparent 28%),
+          radial-gradient(circle at bottom right, #d7f4ef 0, transparent 32%),
+          var(--bg);
+      }
+      .wrap { max-width: 860px; margin: 0 auto; padding: 32px 20px 56px; }
+      .header { display: flex; align-items: center; justify-content: space-between; }
+      h1 { margin: 0; font-size: 30px; }
+      .back-btn {
+        display: inline-flex; align-items: center; gap: 6px; padding: 8px 18px;
+        border: 1px solid var(--line); border-radius: 14px; background: white;
+        color: var(--muted); font: inherit; font-size: 14px; cursor: pointer; text-decoration: none;
+      }
+      .back-btn:hover { border-color: var(--accent); color: var(--accent); }
+      .sub { color: var(--muted); margin: 6px 0 24px; }
+      .panel {
+        background: var(--panel); border: 1px solid var(--line); border-radius: 20px;
+        padding: 22px 24px; box-shadow: 0 12px 40px rgba(23,33,38,0.06); margin-bottom: 18px;
+      }
+      h2 { font-size: 18px; margin: 0 0 6px; }
+      .ep-desc { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+      .method { display: inline-block; font-weight: 700; font-size: 12px; padding: 2px 8px; border-radius: 6px; margin-right: 8px; }
+      .method.post { background: #e6f4ea; color: #15803d; }
+      .method.get { background: #e6eef6; color: #1d4ed8; }
+      .path { font-family: ui-monospace, monospace; font-size: 14px; color: var(--ink); }
+      table.params { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 13px; }
+      table.params th, table.params td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #efe9df; }
+      table.params th { color: var(--muted); font-weight: 600; }
+      table.params code { background: #eee6d8; padding: 1px 6px; border-radius: 5px; }
+      .code {
+        position: relative; background: var(--code-bg); color: #e6edf3; border-radius: 12px;
+        padding: 14px 16px; font-family: ui-monospace, monospace; font-size: 13px;
+        line-height: 1.6; overflow-x: auto; white-space: pre; margin: 8px 0;
+      }
+      .copy { position: absolute; top: 8px; right: 8px; padding: 4px 10px; border: none; border-radius: 8px; background: #2f3846; color: #cdd6e2; font-size: 12px; cursor: pointer; }
+      .copy:hover { background: #3a4657; }
+      .tok { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      .tok code { background: #eee6d8; padding: 6px 12px; border-radius: 8px; font-size: 14px; word-break: break-all; }
+      .pill { padding: 2px 8px; border-radius: 6px; font-size: 12px; }
+      .pill.lan { background: #e6f4ea; color: #15803d; }
+      .pill.local { background: #fef6e7; color: #9a6a10; }
+      .warn-box { background: #fef6e7; border: 1px solid #f0d9a8; border-radius: 12px; padding: 12px 16px; font-size: 13px; color: #7a5a12; line-height: 1.6; }
+      .muted { color: var(--muted); font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="header">
+        <h1>🔌 API 接口</h1>
+        <a class="back-btn" href="/setup">← 返回设置</a>
+      </div>
+      <p class="sub">把本服务当作「语音转文字 / 远程打字」微服务，供你其他项目对接（局域网 + token）。</p>
+
+      <div class="panel">
+        <h2>访问令牌 (token)</h2>
+        <p class="ep-desc">所有接口都需要携带此 token。泄露后删除本机 <code>.web_input_token</code> 并重启服务即可刷新。</p>
+        <div class="tok">
+          <code id="token">加载中…</code>
+          <button class="back-btn" id="copyToken">复制</button>
+        </div>
+        <p class="muted" id="baseInfo" style="margin-top:12px"></p>
+      </div>
+
+      <div class="panel">
+        <h2><span class="method post">POST</span><span class="path">/api/v1/stt</span> <span class="pill lan">局域网</span></h2>
+        <p class="ep-desc">纯语音转文字：上传音频 → 返回文本。不注入、不入队、不写历史。</p>
+        <table class="params">
+          <tr><th>字段</th><th>类型</th><th>说明</th></tr>
+          <tr><td><code>audio</code></td><td>file</td><td>音频文件（wav/webm/opus/mp4/m4a/ogg… 任意）</td></tr>
+          <tr><td><code>token</code></td><td>string</td><td>访问令牌</td></tr>
+          <tr><td><code>language</code></td><td>string</td><td>可选，默认 zh；可填 en/ja/ko/… 或 auto</td></tr>
+        </table>
+        <div class="muted">返回：<code>{ "ok": true, "text": "识别文字", "language": "zh" }</code></div>
+        <div class="code"><button class="copy">复制</button><span id="ex-stt-curl"></span></div>
+        <div class="code"><button class="copy">复制</button><span id="ex-stt-py"></span></div>
+      </div>
+
+      <div class="panel">
+        <h2><span class="method post">POST</span><span class="path">/api/web_input/resend</span> <span class="pill lan">局域网</span></h2>
+        <p class="ep-desc">远程打字：把一段文本注入到本机当前焦点窗口（复用注入队列，带状态回传）。</p>
+        <table class="params">
+          <tr><th>字段</th><th>类型</th><th>说明</th></tr>
+          <tr><td><code>token</code></td><td>string</td><td>访问令牌</td></tr>
+          <tr><td><code>text</code></td><td>string</td><td>要打进本机的文本</td></tr>
+        </table>
+        <div class="muted">返回：<code>{ "ok": true, "job_id": "…" }</code>，可用 <code>/api/web_input/status</code> 查进度。</div>
+        <div class="code"><button class="copy">复制</button><span id="ex-type-curl"></span></div>
+      </div>
+
+      <div class="panel">
+        <h2><span class="method post">POST</span><span class="path">/api/web_input/submit</span> <span class="pill lan">局域网</span></h2>
+        <p class="ep-desc">录音即打字：上传音频 → 转写 → 注入本机 + 返回文本与 job_id（手机录音页用的就是它）。</p>
+        <div class="muted">字段同 <code>/api/v1/stt</code>。返回：<code>{ "ok": true, "text": "…", "job_id": "…" }</code></div>
+      </div>
+
+      <div class="panel">
+        <h2>其他只读接口 <span class="pill lan">局域网</span></h2>
+        <table class="params">
+          <tr><th>接口</th><th>说明</th></tr>
+          <tr><td><code>GET /api/web_input/status?token=&job_id=</code></td><td>查询某次注入的实时状态</td></tr>
+          <tr><td><code>GET /api/web_input/history?token=&limit=</code></td><td>最近输入历史</td></tr>
+        </table>
+      </div>
+
+      <div class="panel">
+        <div class="warn-box">
+          🔒 <b>安全</b>：以上接口均需 token；装软件 / 删模型 / 改配置等危险操作<b>仅本机可访问</b>，局域网无法调用，也无法伪造注入结果。服务使用自签证书，脚本调用请忽略证书校验（curl <code>-k</code> / Python <code>verify=False</code>）。
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+
+      function bindCopies() {
+        document.querySelectorAll(".copy").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const txt = btn.parentElement.querySelector("span").textContent;
+            navigator.clipboard.writeText(txt).then(() => {
+              btn.textContent = "已复制 ✓";
+              setTimeout(() => (btn.textContent = "复制"), 1500);
+            });
+          });
+        });
+      }
+
+      async function load() {
+        try {
+          const r = await fetch("/api/web_input/config");
+          const d = await r.json();
+          const token = d.token;
+          $("token").textContent = token;
+          // 优先选真实局域网 IP（排除 docker/虚拟机网段）
+          const realIp = (d.ips || []).find(
+            (ip) => !ip.startsWith("172.1") && !ip.startsWith("192.168.122.")
+          ) || (d.ips && d.ips[0]) || "127.0.0.1";
+          const base = "https://" + realIp + ":" + d.port;
+          $("baseInfo").innerHTML = "服务地址：<code>" + base +
+            "</code>（本机可用 <code>https://127.0.0.1:" + d.port + "</code>）";
+
+          $("ex-stt-curl").textContent =
+            "curl -k -X POST " + base + "/api/v1/stt \\\n" +
+            "  -F \"audio=@voice.wav\" \\\n" +
+            "  -F \"token=" + token + "\" \\\n" +
+            "  -F \"language=zh\"";
+
+          $("ex-stt-py").textContent =
+            "import httpx\n" +
+            "def stt(path):\n" +
+            "    with open(path, 'rb') as f:\n" +
+            "        r = httpx.post('" + base + "/api/v1/stt',\n" +
+            "            files={'audio': f},\n" +
+            "            data={'token': '" + token + "', 'language': 'zh'},\n" +
+            "            verify=False, timeout=120)\n" +
+            "    return r.json()['text']\n" +
+            "print(stt('voice.wav'))";
+
+          $("ex-type-curl").textContent =
+            "curl -k -X POST " + base + "/api/web_input/resend \\\n" +
+            "  -F \"token=" + token + "\" \\\n" +
+            "  -F \"text=你好，这段文字会打到电脑光标处\"";
+
+          $("copyToken").addEventListener("click", () => {
+            navigator.clipboard.writeText(token).then(() => {
+              $("copyToken").textContent = "已复制 ✓";
+              setTimeout(() => ($("copyToken").textContent = "复制"), 1500);
+            });
+          });
+          bindCopies();
+        } catch (e) {
+          $("token").textContent = "加载失败：" + e.message + "（此页仅本机可访问）";
+        }
+      }
+      load();
+    </script>
+  </body>
+</html>

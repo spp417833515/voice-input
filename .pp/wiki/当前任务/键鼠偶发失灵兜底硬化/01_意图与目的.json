@@ -1,0 +1,16 @@
+{
+  "brief": "根治 ollama-voice-input daemon 偶发导致全局键盘/鼠标失灵的问题",
+  "created_at": "2026-05-29",
+  "用户原始描述": "用了键鼠同步软件(Synergy 客户端)+远程控制, 之前 Claude 写/跑过按键相关脚本后, 全局键盘鼠标失效, 只剩鼠标左键和移动可用; 偶发, 会自己恢复; 想知道根因并根治。",
+  "调研三源": {
+    "代码事实": [
+      "本机无物理键盘, 键盘走 Synergy(client → 10.0.0.110:24800) 注入",
+      "三个 hotkey grabber 全是被动监听: XGrabKey 用 GrabModeAsync 被动 grab_key; XInput2 仅 xinput_select_events; evdev grab()=pass。均不冻结全局键盘",
+      "全项目唯一能'按住键不放'的是 _type_text 的 uinput 修饰键注入(Ctrl/Shift); 唯一能'霸占鼠标'的是 TranslationOverlay._grab_pointer 的 seat.grab(ALL_POINTING)",
+      "缺口1: main() 仅处理 SIGTERM, 未处理 SIGINT/SIGHUP, 前台运行被 Ctrl-C 时清理 finally 可能不走",
+      "缺口2: 加载态浮窗无超时(仅结果态 10s), 截图翻译卡死则 pointer grab 永不释放",
+      "缺口3: 无空闲兜底, 卡住的修饰键/grab 只能靠下次成功注入或重启自愈 → 表现为'偶发+自愈'"
+    ]
+  },
+  "锁定的真实目的": "让该 daemon 在任何异常路径(注入中途中断/浮窗卡死/前台 Ctrl-C 退出)下都不会把残留的修饰键或指针 grab 留给系统; 即使偶发卡住, 也能在数秒内自愈, 不再需要用户手动重连/重启。"
+}

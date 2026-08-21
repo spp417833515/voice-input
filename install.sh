@@ -168,9 +168,11 @@ StartLimitIntervalSec=60
 [Service]
 Type=simple
 WorkingDirectory=$DIR
+Environment=PYTHONUNBUFFERED=1
 ${CUDA_LIBS:+Environment=LD_LIBRARY_PATH=$CUDA_LIBS}
 ExecStartPre=-/usr/bin/fuser -k -TERM 17945/tcp
-ExecStart=$VENV/bin/uvicorn app:app --host 127.0.0.1 --port 17945
+ExecStartPre=/bin/bash -c 'test -f $DIR/certs/cert.pem || $DIR/gen_cert.sh'
+ExecStart=$VENV/bin/uvicorn app:app --host 0.0.0.0 --port 17945 --ssl-keyfile $DIR/certs/key.pem --ssl-certfile $DIR/certs/cert.pem
 Restart=on-failure
 RestartSec=3
 
@@ -187,12 +189,17 @@ StartLimitBurst=5
 StartLimitIntervalSec=60
 
 [Service]
-Type=simple
+# Type=notify + WatchdogSec: 主循环卡死时(不再喂狗) systemd 在 20s 后 SIGABRT 重启。
+# NotifyAccess=all: sg 会 fork, python 非 MainPID, 需允许非主进程发 sd_notify。
+Type=notify
+NotifyAccess=all
+WatchdogSec=20
 WorkingDirectory=$DIR
 Environment=GDK_BACKEND=x11
+Environment=PYTHONUNBUFFERED=1
 ${CUDA_LIBS:+Environment=LD_LIBRARY_PATH=$CUDA_LIBS}
-ExecStart=/bin/bash -c 'exec sg input -c "DISPLAY=\$DISPLAY GDK_BACKEND=\$GDK_BACKEND XAUTHORITY=\$XAUTHORITY WAYLAND_DISPLAY=\$WAYLAND_DISPLAY XDG_RUNTIME_DIR=\$XDG_RUNTIME_DIR XDG_SESSION_TYPE=\$XDG_SESSION_TYPE DBUS_SESSION_BUS_ADDRESS=\$DBUS_SESSION_BUS_ADDRESS LD_LIBRARY_PATH=\$LD_LIBRARY_PATH $VENV/bin/python3 $DIR/daemon.py"'
-Restart=on-failure
+ExecStart=/bin/bash -c 'exec sg input -c "DISPLAY=\$DISPLAY GDK_BACKEND=\$GDK_BACKEND XAUTHORITY=\$XAUTHORITY WAYLAND_DISPLAY=\$WAYLAND_DISPLAY XDG_RUNTIME_DIR=\$XDG_RUNTIME_DIR XDG_SESSION_TYPE=\$XDG_SESSION_TYPE DBUS_SESSION_BUS_ADDRESS=\$DBUS_SESSION_BUS_ADDRESS NOTIFY_SOCKET=\$NOTIFY_SOCKET WATCHDOG_USEC=\$WATCHDOG_USEC LD_LIBRARY_PATH=\$LD_LIBRARY_PATH $VENV/bin/python3 $DIR/daemon.py"'
+Restart=always
 RestartSec=3
 
 [Install]

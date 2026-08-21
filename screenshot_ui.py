@@ -112,6 +112,7 @@ class ResultPopup(Gtk.Window):
         super().__init__(type=Gtk.WindowType.POPUP)
 
         self.image_path = image_path
+        self._grabbed = False
 
         # 应用 CSS
         provider = Gtk.CssProvider()
@@ -187,6 +188,9 @@ class ResultPopup(Gtk.Window):
 
         # grab 键盘以接收 Esc
         GLib.idle_add(self._grab_keyboard)
+        # 安全兜底：翻译卡死/无响应时最多 45s 强制退出并释放键盘 grab，
+        # 杜绝 standalone 运行时键盘被永久 grab 导致整机键盘失灵。
+        GLib.timeout_add(45000, self._safety_quit)
 
         # 后台翻译
         threading.Thread(target=self._translate, daemon=True).start()
@@ -195,11 +199,18 @@ class ResultPopup(Gtk.Window):
         win = self.get_window()
         if win:
             seat = Gdk.Display.get_default().get_default_seat()
-            seat.grab(
-                win,
-                Gdk.SeatCapabilities.KEYBOARD,
-                False, None, None, None,
-            )
+            try:
+                status = seat.grab(
+                    win,
+                    Gdk.SeatCapabilities.KEYBOARD,
+                    False, None, None, None,
+                )
+                self._grabbed = (status == Gdk.GrabStatus.SUCCESS)
+                if not self._grabbed:
+                    print(f"键盘 grab 失败 ({int(status)})，Esc 可能无效", file=sys.stderr)
+            except Exception as exc:
+                print(f"键盘 grab 异常: {exc}", file=sys.stderr)
+                self._grabbed = False
         return False
 
     def _position_near_mouse(self) -> None:
@@ -237,9 +248,20 @@ class ResultPopup(Gtk.Window):
         return True
 
     def _quit(self):
-        seat = Gdk.Display.get_default().get_default_seat()
-        seat.ungrab()
+        try:
+            if self._grabbed:
+                seat = Gdk.Display.get_default().get_default_seat()
+                seat.ungrab()
+                self._grabbed = False
+        except Exception:
+            pass
         Gtk.main_quit()
+
+    def _safety_quit(self) -> bool:
+        """兜底：翻译无响应也强制退出并释放键盘 grab，避免键盘被永久占用。"""
+        print("截图翻译超时兜底：强制退出并释放键盘", file=sys.stderr)
+        self._quit()
+        return False
 
     # ---- 翻译 ----
 
@@ -252,7 +274,7 @@ class ResultPopup(Gtk.Window):
                 f"{API_BASE}/api/ocr_translate",
                 files={"image": ("crop.png", img_data, "image/png")},
                 data={"target_lang": TARGET_LANG},
-                timeout=120,
+                timeout=30,
             )
             if resp.status_code != 200:
                 try:

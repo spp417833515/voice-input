@@ -9,4 +9,13 @@ __pycache__/
 .ppdocs-index/
 .agents/
 .claude/
+.codex/
+.cursor/
+.gemini/
+.omc/
+.mcp.json
+.wiki-task
 .daemon.lock
+certs/
+.web_input_token
+/wiki/

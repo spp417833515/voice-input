@@ -1,0 +1,61 @@
+{
+  "task_name": "快捷键状态机与浮窗关闭",
+  "for_clarify_file": "01_意图与目的.json",
+  "status": "approved",
+  "created_at": "2026-05-18",
+  "approved_at": "2026-05-18",
+  "acceptance_oneliner": "python3 -m py_compile daemon.py && grep -q 'query_keymap' daemon.py && grep -q '_auto_close_id' daemon.py && grep -q '_close_translation_overlay' daemon.py && python3 /tmp/test_match_combo_query.py && python3 /tmp/test_overlay_close_paths.py",
+  "tasks": [
+    {
+      "id": "1",
+      "title": "用 query_keymap 替 _pressed",
+      "description": "修复 XInputHotkeyGrabber._match_combo (daemon.py:1837-1849), 把'modifier 是否按下'的判定从 daemon 内部 self._pressed 集合改为 X server 实时键盘位图 dpy.query_keymap(). trigger 判定保留用 self._pressed (因 _handle_press 入口已知 keycode 必在), 不动 _handle_press/_handle_release 的 _pressed 维护. 根因: _pressed 累积状态机一次 release 丢失 (maim XGrabKeyboard race) 即永久错乱 → 任意键触发 screen combo. query_keymap 是 X server 硬件级真实键盘位图 (32 字节, 微秒级查询), 不可能错乱.",
+      "mermaid": "flowchart TD\n  E[RawKeyPress 到达 _handle_press] --> T{keycode == screen trigger?}\n  T -- 否 --> Skip[忽略]\n  T -- 是 --> Q[dpy.query_keymap 拿实时位图]\n  Q --> M{每组 mod_set 至少 1 颗位为 1?}\n  M -- 是 --> Fire[GLib.idle_add screenshot_translate]\n  M -- 否 --> Skip",
+      "data_source": "来源：XInputHotkeyGrabber._pressed (仅 trigger), X server query_keymap 32 字节位图\n经手：_match_combo 重写, 位运算检查 km[kc//8] & (1 << kc%8)\n落点：True/False (决定是否触发 _on_voice_press / screenshot_translate / _on_repeat)",
+      "acceptance_criteria": "修复后: daemon 长时间运行 + RawKeyRelease 偶发丢失场景下, 按任意非 Alt+X 键不再误触发 screen combo. _voice_combo 和 _repeat_combo 的判定也享同样保护 (因为共用 _match_combo). 必要时 _pressed 即使错乱也不影响 modifier 判定 (modifier 用 query_keymap 权威源).",
+      "real_test": "命令：python3 /tmp/test_match_combo_query.py\n期望：exit code 0 + 输出含「PASS: query_keymap 路径任意键不触发 screen combo」(测试场景: _pressed 注入 {X, Alt} 残留, 物理键盘真实状态为空, 调用 _match_combo(_screen_combo) 应返回 False)",
+      "subtasks": [],
+      "depends_on": []
+    },
+    {
+      "id": "2",
+      "title": "浮窗多元关闭路径",
+      "description": "TranslationOverlay (daemon.py:1069-1280) 关闭路径单一依赖问题. 在保留现有 ESC (1143-1148) + 鼠标外点 (1176-1199) 基础上, 新增 2 条独立关闭路径. 改动跨多块逻辑 (overlay 类内 + XInputHotkeyGrabber 联动), 必拆.",
+      "mermaid": "flowchart TD\n  Show[Overlay 显示 show_result] --> Timer[GLib.timeout_add 10s _auto_close]\n  Show --> Reg[XInputHotkeyGrabber 持 overlay 引用]\n  Reg --> AnyKey[任意 RawKeyPress] --> Close1[overlay.destroy]\n  Timer --> Close2[overlay.destroy]\n  ESC[focus + ESC 现有] --> Close3[overlay.destroy]\n  Outside[窗口外鼠标点 现有] --> Close4[overlay.destroy]",
+      "data_source": "来源：TranslationOverlay 实例 (_translation_overlay 全局引用), XInputHotkeyGrabber raw 事件流\n经手：GLib.timeout_add 10s 定时器 + _handle_press 联动信号\n落点：overlay.destroy() (现有 _on_destroy 清理)",
+      "acceptance_criteria": "浮窗显示后用户连按 5 次空格或任意键 → ≤100ms 内消失; 完全不动鼠标也能在 10s 后自动消失; 现有 ESC 和鼠标外点行为不变.",
+      "real_test": "命令：python3 /tmp/test_overlay_close_paths.py\n期望：exit code 0 + 输出含「PASS: 4 条关闭路径全通」",
+      "subtasks": [
+        {
+          "id": "2.1",
+          "title": "10 秒定时自动关",
+          "description": "TranslationOverlay.show_result (daemon.py:1226-1278 附近) 末尾加 self._auto_close_id = GLib.timeout_add(10000, lambda: (self.destroy(), False)[-1]). _on_destroy (daemon.py:1284-1302) 内 cleanup 时 GLib.source_remove(self._auto_close_id) 防止悬空. __init__ (daemon.py:1077) 加 self._auto_close_id = 0.",
+          "mermaid": "flowchart TD\n  S[show_result 调用] --> T[GLib.timeout_add 10000ms]\n  T --> W[10s 后回调]\n  W --> D[self.destroy]\n  X[手动 destroy] --> R[_on_destroy] --> SR[GLib.source_remove _auto_close_id]",
+          "data_source": "来源：TranslationOverlay.show_result 调用 (结果已渲染完毕)\n经手：GLib.timeout_add 注册 10000ms 定时器, _on_destroy 清理\n落点：self.destroy() 触发 _on_destroy 走清理链路",
+          "acceptance_criteria": "show_result 调用后 10s 内未被其他路径关闭则浮窗自动 destroy; 提前关闭时定时器被 GLib.source_remove 干净撤销 (无 lambda 引用泄漏).",
+          "real_test": "命令：python3 -m py_compile daemon.py && grep -nE '_auto_close_id\\s*=\\s*GLib\\.timeout_add|_auto_close_id\\s*=\\s*0|GLib\\.source_remove\\(self\\._auto_close_id' daemon.py | wc -l | grep -q '^3$' && echo PASS\n期望：exit code 0 + 输出 PASS (3 处锚点全在: 注册 / 初始化 / 清理)",
+          "subtasks": [],
+          "depends_on": []
+        },
+        {
+          "id": "2.2",
+          "title": "任意全局键关浮窗",
+          "description": "XInputHotkeyGrabber._handle_press (daemon.py:1909-1928) 在 _match_combo 判定之后, 若 _translation_overlay 存在则触发 GLib.idle_add(_close_translation_overlay). 新增模块级 helper _close_translation_overlay (放在 _show_overlay_loading 附近, daemon.py:1304 之前). 不依赖浮窗焦点 (用户在工作窗口打字也能触发).",
+          "mermaid": "flowchart TD\n  E[RawKeyPress] --> H[_handle_press] --> C{_translation_overlay 存在?}\n  C -- 否 --> Skip[原流程: combo 判定]\n  C -- 是 --> Idle[GLib.idle_add _close_translation_overlay] --> Skip\n  Idle --> Close[_translation_overlay.destroy] --> Clear[_translation_overlay = None]",
+          "data_source": "来源：XInputHotkeyGrabber raw RawKeyPress 事件 (用户按任何键)\n经手：模块级 _close_translation_overlay helper + GLib.idle_add 跨线程安全\n落点：_translation_overlay.destroy() 走 _on_destroy 链路",
+          "acceptance_criteria": "浮窗显示后用户按任意键 (包括字母 / 方向键 / 修饰键单独按下) 都能在 ≤100ms 内关闭浮窗; XInputHotkeyGrabber 自身的快捷键判定 (voice/screen/repeat) 不受影响.",
+          "real_test": "命令：python3 -m py_compile daemon.py && grep -nE 'def _close_translation_overlay|GLib\\.idle_add\\(_close_translation_overlay\\)' daemon.py | wc -l | grep -q '^2$' && echo PASS\n期望：exit code 0 + 输出 PASS (函数定义 + _handle_press 内调用 共 2 处锚点)",
+          "subtasks": [],
+          "depends_on": [
+            "2.1"
+          ]
+        }
+      ],
+      "depends_on": [
+        "1"
+      ]
+    }
+  ],
+  "executing_started_at": "2026-05-18T18:51:17",
+  "executing_finished_at": "2026-05-18T18:56:31"
+}

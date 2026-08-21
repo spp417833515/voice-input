@@ -1,0 +1,29 @@
+{
+  "task_name": "快捷键状态机与浮窗关闭",
+  "user_original_input": "daemon 启用后，无论按什么键都会触发截图翻译（Alt+X）；同源 bug：TranslationOverlay 浮窗成「幽灵」（用户只用键盘工作时关闭路径单一依赖鼠标 → 浮窗永不关）",
+  "status": "locked",
+  "created_at": "2026-05-18",
+  "locked_at": "2026-05-18",
+  "understanding_list": [
+    {
+      "id": 1,
+      "user_intent": "daemon 启用后无论按什么键都触发截图翻译",
+      "ai_interpretation": "daemon 内部 XInputHotkeyGrabber._pressed 状态机维护按键集合, 但 RawKeyRelease 事件在某些场景下丢失 (高度怀疑: maim 启动 XGrabKeyboard 切换瞬间的 race window), 导致 X(53) + Alt(64 或 108) 卡在 _pressed 集合; 后续任意非 X 键的 RawKeyPress 都使 _match_combo(_screen_combo) 返回 True, 误触发 GLib.idle_add(screenshot_translate) → maim 框选界面铺满屏幕",
+      "user_purpose": "daemon 长时间运行后, 按普通字母键应正常打字, 不应弹出截图框选界面; 只有真实按下 Alt+X 才触发截图翻译",
+      "final_decision": "修复后: daemon 任意时刻按非 Alt+X 组合的键不应触发截图; 即便此前已用过 N 次 Alt+X (含 release 事件可能丢失的场景), 后续按普通键仍正常打字. 验收: daemon 跑 ≥1 小时, 期间至少做 5 次截图翻译操作, 然后在文本编辑器按 a/b/c/d/e 5 个字母键 → 无任何 maim 进程启动 (pgrep maim 空) + daemon journal 无 '_do_screenshot_translate' / 'TranslationOverlay' 新日志. 约束: 不动 _voice_combo 和 _repeat_combo 的判定逻辑, 仅 _screen_combo 检查需要类似严密性时一并修.",
+      "evidence": "daemon.py:1837-1849 (XInputHotkeyGrabber._match_combo, 当前依赖 self._pressed 集合做 modifier 判定); daemon.py:1909-1932 (_handle_press / _handle_release, 维护 _pressed 但 RawKeyRelease 在 maim XGrabKeyboard 切换时可能丢失); daemon.py:1797-1832 (类初始化, _pressed 是 set[int]); 复用/类库/XInputHotkeyGrabber.md; 前端/全局快捷键系统.md",
+      "confidence": "高"
+    },
+    {
+      "id": 2,
+      "user_intent": "TranslationOverlay 浮窗成幽灵 (隐含同源 bug)",
+      "ai_interpretation": "截图翻译结果浮窗当前关闭路径仅 2 条: (a) daemon.py:1143-1148 _on_key_press 处理 ESC, 但要求浮窗有焦点; (b) daemon.py:1176-1199 _check_outside_click 100ms 轮询检测'窗口外鼠标按下'. 用户实际工作场景: 焦点在 Chrome/VSCode 等工作窗口键盘打字, ESC 发不到浮窗; 用户只动键盘不动鼠标 → 浮窗永远在屏幕上挡视野",
+      "user_purpose": "截图翻译结果浮窗显示后, 用户消费完结果, 无论用键盘还是鼠标都应能让它消失; 不阻挡视线, 不影响其他工作",
+      "final_decision": "浮窗显示后用 4 种关闭路径任一即可关: (a) 显示 10 秒后定时自动消失 (GLib.timeout_add); (b) 浮窗外任何鼠标点击 (现有 _check_outside_click 保留); (c) 焦点在浮窗时按 ESC (现有 _on_key_press 保留); (d) 任意全局按键 → 通过 XInputHotkeyGrabber raw 事件信号让 overlay 收到关闭指令. 约束: 浮窗未关闭期间不阻塞 daemon 其他功能 (录音/快捷键/截图正常). 验收: 浮窗出现后用户连按 5 次空格 (或任意键) → 浮窗 ≤ 100ms 内消失 + daemon 主功能不受影响.",
+      "evidence": "daemon.py:1143-1148 (_on_key_press, 仅 ESC + 焦点依赖); daemon.py:1176-1199 (_check_outside_click, 仅鼠标按下); daemon.py:1069-1280 (TranslationOverlay 类整体); 前端/截图翻译流程.md",
+      "confidence": "高"
+    }
+  ],
+  "clarify_rounds": [],
+  "web_references": []
+}
