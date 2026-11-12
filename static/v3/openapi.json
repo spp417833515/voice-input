@@ -1,0 +1,3942 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ollama-voice-input v1",
+    "description": "v3 `/api/v1` 与 `/api/setup/*` 路由，以及 static/v3 唯一界面入口。是否已可上线只看 unmet_gates。\n\n鉴权：本机以 socket 对端 loopback（127.0.0.1 / ::1，含 IPv4-mapped）判定，忽略 X-Forwarded-For。\n局域网路径：先判定对端属于 RFC1918、IPv6 ULA 或必要链路本地，再恒定时间校验 token。\n公网、198.18/15、TEST-NET、保留网段以及无法解析的对端，即使 token 正确也 403。\n仅本机路径即使带 token 也不对远程放行。\nHost 必须带服务端口：本机请求只能是 127.0.0.1 / localhost / ::1；局域网请求必须是允许的局域网地址。\n缺 Origin 视为非浏览器，不做 CSRF Origin 检查，但仍受对端 / token / Host 约束（防 DNS rebinding）。\n若存在 Origin，必须是 https 且与 Host、对端类型一致；本机 Origin 不能搭私网 Host；未知 Origin 拒绝。不开 CORS *。\nGET /api/v1/status 的 ok 只表示本接口响应成功，不是可上线；是否达切流条件只看 unmet_gates。\nSSE 走 HTTP，不使用 WebSocket。请求体在 ASGI receive 层按累计实际字节限流，超限 413，不把超额字节喂给下游。",
+    "version": "0.0.0-v3-api"
+  },
+  "paths": {
+    "/api/v1/recognize/sessions": {
+      "post": {
+        "tags": [
+          "recognize"
+        ],
+        "summary": "Create Session",
+        "operationId": "create_session_api_v1_recognize_sessions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecognizeSessionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecognizeSessionCreated"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "鉴权失败：非本机、对端不是允许的局域网、token 无效、Host/Origin 不可信。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "请求体超过该路径的累计字节上限（缺 Content-Length 时同样生效）。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/recognize/sessions/{session_id}/chunks": {
+      "post": {
+        "tags": [
+          "recognize"
+        ],
+        "summary": "Upload Chunk",
+        "description": "识别 chunk 必须是 application/octet-stream（或 application/x-pcm）的 s16le PCM，长度必须为偶数；上限为 max_chunk_bytes，按累计实际字节在收包时执行。",
+        "operationId": "upload_chunk_api_v1_recognize_sessions__session_id__chunks_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "X-Chunk-Index",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Chunk-Index"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChunkAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "鉴权失败：非本机、对端不是允许的局域网、token 无效、Host/Origin 不可信。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "请求体超过该路径的累计字节上限（缺 Content-Length 时同样生效）。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/recognize/sessions/{session_id}/events": {
+      "get": {
+        "tags": [
+          "recognize"
+        ],
+        "summary": "Session Events",
+        "operationId": "session_events_api_v1_recognize_sessions__session_id__events_get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "text/event-stream；每条 data 为对应契约模型 JSON。",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionSSEEventEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "鉴权失败：非本机、对端不是允许的局域网、token 无效、Host/Origin 不可信。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/recognize/sessions/{session_id}/finish": {
+      "post": {
+        "tags": [
+          "recognize"
+        ],
+        "summary": "Finish",
+        "operationId": "finish_api_v1_recognize_sessions__session_id__finish_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionClosedEvent"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "鉴权失败：非本机、对端不是允许的局域网、token 无效、Host/Origin 不可信。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "请求体超过该路径的累计字节上限（缺 Content-Length 时同样生效）。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/recognize/sessions/{session_id}/cancel": {
+      "post": {
+        "tags": [
+          "recognize"
+        ],
+        "summary": "Cancel",
+        "operationId": "cancel_api_v1_recognize_sessions__session_id__cancel_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionClosedEvent"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "鉴权失败：非本机、对端不是允许的局域网、token 无效、Host/Origin 不可信。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "请求体超过该路径的累计字节上限（缺 Content-Length 时同样生效）。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/utterances": {
+      "post": {
+        "tags": [
+          "utterances"
+        ],
+        "summary": "Create Utterance",
+        "operationId": "create_utterance_api_v1_utterances_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UtteranceCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UtteranceAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "鉴权失败：非本机、对端不是允许的局域网、token 无效、Host/Origin 不可信。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "请求体超过该路径的累计字节上限（缺 Content-Length 时同样生效）。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/utterances/from-audio": {
+      "post": {
+        "tags": [
+          "utterances"
+        ],
+        "summary": "From Audio",
+        "description": "只接受单个音频文件；限制按整个请求体累计字节（含 multipart 头），不是先整段读入内存再拒绝。空体或静音会被拒绝。",
+        "operationId": "from_audio_api_v1_utterances_from_audio_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_from_audio_api_v1_utterances_from_audio_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UtteranceAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "鉴权失败：非本机、对端不是允许的局域网、token 无效、Host/Origin 不可信。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "请求体超过该路径的累计字节上限（缺 Content-Length 时同样生效）。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "VoiceToken": []
+          }
+        ]
+      }
+    },
+    "/api/v1/utterances/resend": {
+      "post": {
+        "tags": [
+          "utterances"
+        ],
+        "summary": "Resend",
+        "operationId": "resend_api_v1_utterances_resend_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UtteranceResendRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/UtteranceResendQueued"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UtteranceResendNeedsConfirmation"
+                    }
+                  ],
+                  "title": "Response Resend Api V1 Utterances Resend Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "鉴权失败：非本机、对端不是允许的局域网、token 无效、Host/Origin 不可信。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "请求体超过该路径的累计字节上限（缺 Content-Length 时同样生效）。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "VoiceToken": []
+          }
+        ]
+      }
+    },
+    "/api/v1/jobs/claim": {
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Claim",
+        "operationId": "claim_api_v1_jobs_claim_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/JobClaimRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/JobClaimed"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Claim Api V1 Jobs Claim Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "鉴权失败：非本机、对端不是允许的局域网、token 无效、Host/Origin 不可信。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "请求体超过该路径的累计字节上限（缺 Content-Length 时同样生效）。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/jobs/{job_id}/ack": {
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Ack",
+        "operationId": "ack_api_v1_jobs__job_id__ack_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobAckRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobAckAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "鉴权失败：非本机、对端不是允许的局域网、token 无效、Host/Origin 不可信。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "请求体超过该路径的累计字节上限（缺 Content-Length 时同样生效）。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/jobs/{job_id}": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Query",
+        "operationId": "query_api_v1_jobs__job_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/JobQueryFound"
+                    },
+                    {
+                      "$ref": "#/components/schemas/JobQueryUnknown"
+                    }
+                  ],
+                  "title": "Response Query Api V1 Jobs  Job Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "鉴权失败：非本机、对端不是允许的局域网、token 无效、Host/Origin 不可信。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "VoiceToken": []
+          }
+        ]
+      }
+    },
+    "/api/v1/stt": {
+      "post": {
+        "tags": [
+          "capabilities"
+        ],
+        "summary": "Stt",
+        "description": "只接受单个音频文件；限制按整个请求体累计字节（含 multipart 头），不是先整段读入内存再拒绝。空体或静音会被拒绝。",
+        "operationId": "stt_api_v1_stt_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_stt_api_v1_stt_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SttResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "鉴权失败：非本机、对端不是允许的局域网、token 无效、Host/Origin 不可信。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "请求体超过该路径的累计字节上限（缺 Content-Length 时同样生效）。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "VoiceToken": []
+          }
+        ]
+      }
+    },
+    "/api/v1/polish": {
+      "post": {
+        "tags": [
+          "capabilities"
+        ],
+        "summary": "Polish",
+        "operationId": "polish_api_v1_polish_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PolishRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolishResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "鉴权失败：非本机、对端不是允许的局域网、token 无效、Host/Origin 不可信。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "请求体超过该路径的累计字节上限（缺 Content-Length 时同样生效）。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "VoiceToken": []
+          }
+        ]
+      }
+    },
+    "/api/v1/translate": {
+      "post": {
+        "tags": [
+          "capabilities"
+        ],
+        "summary": "Translate",
+        "operationId": "translate_api_v1_translate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TranslateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranslateResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "鉴权失败：非本机、对端不是允许的局域网、token 无效、Host/Origin 不可信。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "请求体超过该路径的累计字节上限（缺 Content-Length 时同样生效）。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "VoiceToken": []
+          }
+        ]
+      }
+    },
+    "/api/v1/ocr-translate": {
+      "post": {
+        "tags": [
+          "capabilities"
+        ],
+        "summary": "Ocr Translate",
+        "description": "只接受单个图片文件；限制按整个请求体累计字节。",
+        "operationId": "ocr_translate_api_v1_ocr_translate_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_ocr_translate_api_v1_ocr_translate_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OcrTranslateResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "鉴权失败：非本机、对端不是允许的局域网、token 无效、Host/Origin 不可信。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "请求体超过该路径的累计字节上限（缺 Content-Length 时同样生效）。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/history": {
+      "get": {
+        "tags": [
+          "control"
+        ],
+        "summary": "History",
+        "operationId": "history_api_v1_history_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "鉴权失败：非本机、对端不是允许的局域网、token 无效、Host/Origin 不可信。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "VoiceToken": []
+          }
+        ]
+      }
+    },
+    "/api/v1/config": {
+      "get": {
+        "tags": [
+          "control"
+        ],
+        "summary": "Get Config",
+        "operationId": "get_config_api_v1_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppConfigView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "鉴权失败：非本机、对端不是允许的局域网、token 无效、Host/Origin 不可信。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      },
+      "post": {
+        "tags": [
+          "control"
+        ],
+        "summary": "Post Config",
+        "operationId": "post_config_api_v1_config_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppConfigUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppConfigView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "鉴权失败：非本机、对端不是允许的局域网、token 无效、Host/Origin 不可信。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "请求体超过该路径的累计字节上限（缺 Content-Length 时同样生效）。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/status": {
+      "get": {
+        "tags": [
+          "control"
+        ],
+        "summary": "Status",
+        "operationId": "status_api_v1_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiStatusResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "鉴权失败：非本机、对端不是允许的局域网、token 无效、Host/Origin 不可信。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [],
+        "description": "Status ok 只表示本接口响应成功，不是可上线或已切流；是否达切流条件只看 unmet_gates。"
+      }
+    },
+    "/api/v1/events": {
+      "get": {
+        "tags": [
+          "control"
+        ],
+        "summary": "Product Events",
+        "operationId": "product_events_api_v1_events_get",
+        "responses": {
+          "200": {
+            "description": "text/event-stream；每条 data 为对应契约模型 JSON。",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductSSEEventEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "鉴权失败：非本机、对端不是允许的局域网、token 无效、Host/Origin 不可信。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/events/platform": {
+      "post": {
+        "tags": [
+          "control"
+        ],
+        "summary": "Platform Event",
+        "description": "本机桌面平台壳的状态进入同一产品事件流（状态栏唯一来源）。",
+        "operationId": "platform_event_api_v1_events_platform_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlatformEventCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformEventAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "鉴权失败：非本机、对端不是允许的局域网、token 无效、Host/Origin 不可信。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "请求体超过该路径的累计字节上限（缺 Content-Length 时同样生效）。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/setup/check": {
+      "get": {
+        "tags": [
+          "setup"
+        ],
+        "summary": "Setup Check",
+        "operationId": "setup_check_api_setup_check_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupCheckResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "鉴权失败：非本机、对端不是允许的局域网、token 无效、Host/Origin 不可信。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/setup/tasks": {
+      "post": {
+        "tags": [
+          "setup"
+        ],
+        "summary": "Setup Task Start",
+        "operationId": "setup_task_start_api_setup_tasks_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupTaskCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupTask"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "鉴权失败：非本机、对端不是允许的局域网、token 无效、Host/Origin 不可信。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "请求体超过该路径的累计字节上限（缺 Content-Length 时同样生效）。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/setup/tasks/{task_id}": {
+      "get": {
+        "tags": [
+          "setup"
+        ],
+        "summary": "Setup Task Get",
+        "operationId": "setup_task_get_api_setup_tasks__task_id__get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupTask"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "鉴权失败：非本机、对端不是允许的局域网、token 无效、Host/Origin 不可信。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/lan-access": {
+      "get": {
+        "tags": [
+          "setup"
+        ],
+        "summary": "Lan Access",
+        "operationId": "lan_access_api_v1_lan_access_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LanAccessResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "鉴权失败：非本机、对端不是允许的局域网、token 无效、Host/Origin 不可信。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AckResult": {
+        "type": "string",
+        "enum": [
+          "complete",
+          "none",
+          "partial_or_unknown"
+        ],
+        "title": "AckResult",
+        "description": "投递 ack 的结果取值（业务层解释；存储层原样保存）。"
+      },
+      "ApiStatusResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true,
+            "title": "Ok",
+            "description": "本接口响应成功，不是可上线或已切流。切流条件只看 unmet_gates。",
+            "default": true
+          },
+          "service": {
+            "type": "string",
+            "const": "ollama-voice-input",
+            "title": "Service",
+            "default": "ollama-voice-input"
+          },
+          "unmet_gates": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Unmet Gates",
+            "description": "未满足的切流条件；非空即不可上线。"
+          },
+          "injected": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "type": "object",
+            "title": "Injected"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ApiStatusResponse",
+        "description": "当前运行时状态。unmet_gates 非空即表示未达切流条件，不得把 ok 当成可上线。"
+      },
+      "AppConfigUpdate": {
+        "properties": {
+          "polish_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Polish Enabled"
+          },
+          "custom_keywords": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Keywords"
+          },
+          "translate_target_lang": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translate Target Lang"
+          },
+          "hotkey_voice": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hotkey Voice"
+          },
+          "hotkey_screenshot": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hotkey Screenshot"
+          },
+          "hotkey_repeat": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hotkey Repeat"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "AppConfigUpdate",
+        "description": "POST /api/v1/config 请求体：唯一可写字段集合，未知字段拒绝。"
+      },
+      "AppConfigView": {
+        "properties": {
+          "polish_enabled": {
+            "type": "boolean",
+            "title": "Polish Enabled"
+          },
+          "custom_keywords": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Custom Keywords"
+          },
+          "translate_target_lang": {
+            "type": "string",
+            "title": "Translate Target Lang"
+          },
+          "hotkey_voice": {
+            "type": "string",
+            "title": "Hotkey Voice"
+          },
+          "hotkey_screenshot": {
+            "type": "string",
+            "title": "Hotkey Screenshot"
+          },
+          "hotkey_repeat": {
+            "type": "string",
+            "title": "Hotkey Repeat"
+          },
+          "ollama_model": {
+            "type": "string",
+            "title": "Ollama Model",
+            "description": "产品固定纠错/翻译模型，只读"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "polish_enabled",
+          "custom_keywords",
+          "translate_target_lang",
+          "hotkey_voice",
+          "hotkey_screenshot",
+          "hotkey_repeat",
+          "ollama_model"
+        ],
+        "title": "AppConfigView",
+        "description": "GET/POST /api/v1/config 的响应。只含产品可见字段；百度密钥、Whisper 等旧键留在磁盘但不回传。"
+      },
+      "AsrSetupStatus": {
+        "properties": {
+          "model_name": {
+            "type": "string",
+            "title": "Model Name",
+            "default": "Qwen/Qwen3-ASR-1.7B"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SetupComponentState"
+          },
+          "weights_present": {
+            "type": "boolean",
+            "title": "Weights Present"
+          },
+          "sidecar_running": {
+            "type": "boolean",
+            "title": "Sidecar Running"
+          },
+          "size_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Label"
+          },
+          "device_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Label"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SetupProgress"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": ""
+          },
+          "action": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SetupTaskKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status",
+          "weights_present",
+          "sidecar_running"
+        ],
+        "title": "AsrSetupStatus"
+      },
+      "Body_from_audio_api_v1_utterances_from_audio_post": {
+        "properties": {
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context"
+          },
+          "focus_id": {
+            "type": "string",
+            "title": "Focus Id",
+            "default": ""
+          },
+          "audio": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "binary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audio"
+          }
+        },
+        "type": "object",
+        "title": "Body_from_audio_api_v1_utterances_from_audio_post"
+      },
+      "Body_ocr_translate_api_v1_ocr_translate_post": {
+        "properties": {
+          "target_lang": {
+            "type": "string",
+            "title": "Target Lang"
+          },
+          "lang": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lang"
+          },
+          "image": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "binary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image"
+          }
+        },
+        "type": "object",
+        "required": [
+          "target_lang"
+        ],
+        "title": "Body_ocr_translate_api_v1_ocr_translate_post"
+      },
+      "Body_stt_api_v1_stt_post": {
+        "properties": {
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context"
+          },
+          "audio": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "binary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audio"
+          }
+        },
+        "type": "object",
+        "title": "Body_stt_api_v1_stt_post"
+      },
+      "ChunkAccepted": {
+        "properties": {
+          "accepted": {
+            "type": "boolean",
+            "const": true,
+            "title": "Accepted",
+            "default": true
+          },
+          "index": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Index"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "index"
+        ],
+        "title": "ChunkAccepted"
+      },
+      "ErrorCode": {
+        "type": "string",
+        "enum": [
+          "invalid_request",
+          "not_found",
+          "conflict",
+          "unauthorized",
+          "forbidden",
+          "timeout",
+          "dependency_failed",
+          "asr_unavailable",
+          "polish_failed",
+          "translate_failed",
+          "ocr_failed",
+          "ocr_language_missing",
+          "history_io",
+          "jobs_io",
+          "delivery_failed",
+          "config_io",
+          "internal"
+        ],
+        "title": "ErrorCode"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HistoryListResponse": {
+        "properties": {
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/HistoryRecord"
+            },
+            "type": "array",
+            "title": "Records"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "skipped_malformed": {
+            "type": "integer",
+            "title": "Skipped Malformed",
+            "default": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "records",
+          "total"
+        ],
+        "title": "HistoryListResponse"
+      },
+      "HistoryPolish": {
+        "type": "string",
+        "enum": [
+          "on",
+          "off",
+          "failed",
+          "skipped"
+        ],
+        "title": "HistoryPolish",
+        "description": "历史记录中的润色结果。与旧字段 mode 分离，不互相当别名。"
+      },
+      "HistoryRecord": {
+        "properties": {
+          "timestamp": {
+            "type": "string",
+            "title": "Timestamp"
+          },
+          "raw_text": {
+            "type": "string",
+            "title": "Raw Text"
+          },
+          "final_text": {
+            "type": "string",
+            "title": "Final Text"
+          },
+          "language": {
+            "type": "string",
+            "title": "Language"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UtteranceSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "polish": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HistoryPolish"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "timestamp",
+          "raw_text",
+          "final_text",
+          "language"
+        ],
+        "title": "HistoryRecord",
+        "description": "新记录显式使用 source / polish / job_id。旧 mode 仅兼容读取，不是这些字段的别名。"
+      },
+      "JobAckAccepted": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true,
+            "title": "Ok",
+            "default": true
+          },
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "state": {
+            "$ref": "#/components/schemas/JobState"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "job_id",
+          "state"
+        ],
+        "title": "JobAckAccepted"
+      },
+      "JobAckRequest": {
+        "properties": {
+          "claim_id": {
+            "type": "string",
+            "title": "Claim Id"
+          },
+          "result": {
+            "$ref": "#/components/schemas/AckResult"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "claim_id",
+          "result"
+        ],
+        "title": "JobAckRequest"
+      },
+      "JobClaimRequest": {
+        "properties": {
+          "timeout_s": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout S"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "JobClaimRequest"
+      },
+      "JobClaimed": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "claim_id": {
+            "type": "string",
+            "title": "Claim Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "source": {
+            "$ref": "#/components/schemas/UtteranceSource"
+          },
+          "focus_id": {
+            "type": "string",
+            "title": "Focus Id"
+          },
+          "state": {
+            "type": "string",
+            "const": "claimed",
+            "title": "State",
+            "default": "claimed"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "job_id",
+          "claim_id",
+          "text",
+          "source",
+          "focus_id"
+        ],
+        "title": "JobClaimed"
+      },
+      "JobQueryFound": {
+        "properties": {
+          "found": {
+            "type": "boolean",
+            "const": true,
+            "title": "Found",
+            "default": true
+          },
+          "job": {
+            "$ref": "#/components/schemas/JobRecord"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "job"
+        ],
+        "title": "JobQueryFound",
+        "description": "GET job 在记录存在时的查询响应。state 来自持久化 JobRecord，不可能是 unknown。"
+      },
+      "JobQueryUnknown": {
+        "properties": {
+          "found": {
+            "type": "boolean",
+            "const": false,
+            "title": "Found",
+            "default": false
+          },
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "state": {
+            "type": "string",
+            "const": "unknown",
+            "title": "State",
+            "default": "unknown"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "job_id"
+        ],
+        "title": "JobQueryUnknown",
+        "description": "GET job 在记录不存在时的查询响应。unknown 只出现在此查询形状，不可写入 JobRecord。"
+      },
+      "JobRecord": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "state": {
+            "$ref": "#/components/schemas/JobState"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "default": ""
+          },
+          "source": {
+            "$ref": "#/components/schemas/UtteranceSource",
+            "default": "desktop"
+          },
+          "focus_id": {
+            "type": "string",
+            "title": "Focus Id",
+            "default": ""
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "claim_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claim Id"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "original_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Job Id"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "job_id",
+          "state",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "JobRecord",
+        "description": "jobs.json 中一条记录的 schema。focus_id 跟 job，不是全局单值。state 不含 unknown。"
+      },
+      "JobState": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "claimed",
+          "done",
+          "failed",
+          "delivery_unknown"
+        ],
+        "title": "JobState",
+        "description": "jobs.json 持久化状态。转移规则属于业务层，本层只约束取值。\n\nfailed 仅表示已确定本次毫无输出。\ndelivery_unknown 覆盖部分输出、超时、ack 丢失等未确定投递结果。\n查询不存在的 job 时用 JobQueryUnknown.state=\"unknown\"，不得把 unknown 写入 JobRecord。"
+      },
+      "LanAccessEntry": {
+        "properties": {
+          "ip": {
+            "type": "string",
+            "title": "Ip"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "description": "含 token 的手机录音页地址；只在本机响应中出现"
+          },
+          "url_masked": {
+            "type": "string",
+            "title": "Url Masked"
+          },
+          "qr_svg": {
+            "type": "string",
+            "title": "Qr Svg",
+            "description": "url 的二维码 SVG 文本"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "ip",
+          "url",
+          "url_masked",
+          "qr_svg"
+        ],
+        "title": "LanAccessEntry"
+      },
+      "LanAccessResponse": {
+        "properties": {
+          "port": {
+            "type": "integer",
+            "title": "Port"
+          },
+          "token": {
+            "type": "string",
+            "title": "Token"
+          },
+          "token_masked": {
+            "type": "string",
+            "title": "Token Masked"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/LanAccessEntry"
+            },
+            "type": "array",
+            "title": "Entries"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "port",
+          "token",
+          "token_masked",
+          "entries"
+        ],
+        "title": "LanAccessResponse",
+        "description": "GET /api/v1/lan-access：仅本机。token 只供用户点击复制，不得写入日志或示例。"
+      },
+      "OcrTranslateResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true,
+            "title": "Ok",
+            "default": true
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "ocr_text": {
+            "type": "string",
+            "title": "Ocr Text"
+          },
+          "target_lang": {
+            "type": "string",
+            "title": "Target Lang"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "text",
+          "ocr_text",
+          "target_lang"
+        ],
+        "title": "OcrTranslateResponse",
+        "description": "OCR+翻译成功体：text 是译文，ocr_text 是识别原文；不得把 ocr 当 text。"
+      },
+      "OllamaSetupStatus": {
+        "properties": {
+          "model_name": {
+            "type": "string",
+            "title": "Model Name",
+            "default": "qwen3.5:4b"
+          },
+          "installed": {
+            "type": "boolean",
+            "title": "Installed"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "running": {
+            "type": "boolean",
+            "title": "Running"
+          },
+          "model_status": {
+            "$ref": "#/components/schemas/SetupComponentState"
+          },
+          "size_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Label"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SetupProgress"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": ""
+          },
+          "action": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SetupTaskKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "installed",
+          "running",
+          "model_status"
+        ],
+        "title": "OllamaSetupStatus"
+      },
+      "PlatformEventAccepted": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true,
+            "title": "Ok",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "PlatformEventAccepted"
+      },
+      "PlatformEventCreate": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ProductIdleEvent"
+          },
+          {
+            "$ref": "#/components/schemas/ProductBusyEvent"
+          },
+          {
+            "$ref": "#/components/schemas/ProductErrorEvent"
+          }
+        ],
+        "title": "PlatformEventCreate",
+        "description": "本机桌面平台壳上报的状态（开麦失败、截图中、截图失败等），原样进入产品事件流。\n\n只允许 idle / busy / error；识别、润色、投递状态由服务端业务自己发布，平台不得冒充。",
+        "discriminator": {
+          "propertyName": "event",
+          "mapping": {
+            "busy": "#/components/schemas/ProductBusyEvent",
+            "error": "#/components/schemas/ProductErrorEvent",
+            "idle": "#/components/schemas/ProductIdleEvent"
+          }
+        }
+      },
+      "PolishRequest": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "keywords": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keywords"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "PolishRequest"
+      },
+      "PolishResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true,
+            "title": "Ok",
+            "default": true
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "PolishResponse"
+      },
+      "ProductBusyEvent": {
+        "properties": {
+          "event": {
+            "type": "string",
+            "const": "busy",
+            "title": "Event",
+            "default": "busy"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ProductBusyEvent"
+      },
+      "ProductErrorEvent": {
+        "properties": {
+          "event": {
+            "type": "string",
+            "const": "error",
+            "title": "Event",
+            "default": "error"
+          },
+          "error": {
+            "$ref": "#/components/schemas/ErrorCode"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "details": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "error",
+          "message"
+        ],
+        "title": "ProductErrorEvent"
+      },
+      "ProductIdleEvent": {
+        "properties": {
+          "event": {
+            "type": "string",
+            "const": "idle",
+            "title": "Event",
+            "default": "idle"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ProductIdleEvent"
+      },
+      "RecognizeSessionCreate": {
+        "properties": {
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "RecognizeSessionCreate"
+      },
+      "RecognizeSessionCreated": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "session_id"
+        ],
+        "title": "RecognizeSessionCreated"
+      },
+      "SessionClosedEvent": {
+        "properties": {
+          "event": {
+            "type": "string",
+            "const": "closed",
+            "title": "Event",
+            "default": "closed"
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/SessionClosedReason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "session_id",
+          "reason"
+        ],
+        "title": "SessionClosedEvent"
+      },
+      "SessionClosedReason": {
+        "type": "string",
+        "enum": [
+          "finished",
+          "cancelled",
+          "error",
+          "timeout",
+          "disconnected"
+        ],
+        "title": "SessionClosedReason"
+      },
+      "SetupCapability": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "required": {
+            "type": "boolean",
+            "title": "Required",
+            "default": true
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "available"
+        ],
+        "title": "SetupCapability",
+        "description": "系统能力项（剪贴板、Wayland portal 截图/快捷键、X11 maim、OCR 语言等）。"
+      },
+      "SetupCheckResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true,
+            "title": "Ok",
+            "default": true
+          },
+          "session_type": {
+            "type": "string",
+            "title": "Session Type"
+          },
+          "asr": {
+            "$ref": "#/components/schemas/AsrSetupStatus"
+          },
+          "ollama": {
+            "$ref": "#/components/schemas/OllamaSetupStatus"
+          },
+          "capabilities": {
+            "items": {
+              "$ref": "#/components/schemas/SetupCapability"
+            },
+            "type": "array",
+            "title": "Capabilities"
+          },
+          "unmet_gates": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Unmet Gates"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "session_type",
+          "asr",
+          "ollama",
+          "capabilities"
+        ],
+        "title": "SetupCheckResponse",
+        "description": "ok 只表示检查本身成功；组件是否就绪看 asr/ollama/capabilities，是否可上线看 unmet_gates。"
+      },
+      "SetupComponentState": {
+        "type": "string",
+        "enum": [
+          "missing",
+          "downloading",
+          "ready",
+          "failed"
+        ],
+        "title": "SetupComponentState"
+      },
+      "SetupProgress": {
+        "properties": {
+          "completed_bytes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed Bytes"
+          },
+          "total_bytes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Bytes"
+          },
+          "percent": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Percent"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "SetupProgress"
+      },
+      "SetupTask": {
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "title": "Task Id"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SetupTaskKind"
+          },
+          "state": {
+            "$ref": "#/components/schemas/SetupTaskState"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SetupProgress"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": ""
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ErrorCode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "started_at": {
+            "type": "string",
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "task_id",
+          "kind",
+          "state",
+          "started_at"
+        ],
+        "title": "SetupTask",
+        "description": "一次真实安装/下载/启动作业。succeeded 只在动作真实完成并复查通过后出现。"
+      },
+      "SetupTaskCreate": {
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/SetupTaskKind"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "title": "SetupTaskCreate"
+      },
+      "SetupTaskKind": {
+        "type": "string",
+        "enum": [
+          "asr_download",
+          "asr_start",
+          "ollama_install",
+          "ollama_start",
+          "ollama_pull"
+        ],
+        "title": "SetupTaskKind"
+      },
+      "SetupTaskState": {
+        "type": "string",
+        "enum": [
+          "running",
+          "succeeded",
+          "failed"
+        ],
+        "title": "SetupTaskState"
+      },
+      "SttResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true,
+            "title": "Ok",
+            "default": true
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "SttResponse"
+      },
+      "TranslateRequest": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "target_lang": {
+            "type": "string",
+            "title": "Target Lang"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "text",
+          "target_lang"
+        ],
+        "title": "TranslateRequest"
+      },
+      "TranslateResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true,
+            "title": "Ok",
+            "default": true
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "target_lang": {
+            "type": "string",
+            "title": "Target Lang"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "text",
+          "target_lang"
+        ],
+        "title": "TranslateResponse"
+      },
+      "UtteranceAccepted": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true,
+            "title": "Ok",
+            "default": true
+          },
+          "state": {
+            "type": "string",
+            "const": "queued",
+            "title": "State",
+            "default": "queued"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "text",
+          "job_id"
+        ],
+        "title": "UtteranceAccepted"
+      },
+      "UtteranceCreate": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "source": {
+            "$ref": "#/components/schemas/UtteranceSource"
+          },
+          "focus_id": {
+            "type": "string",
+            "title": "Focus Id",
+            "description": "按 job 绑定的焦点，禁止使用全局唯一焦点变量"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "job_id",
+          "session_id",
+          "source",
+          "focus_id"
+        ],
+        "title": "UtteranceCreate"
+      },
+      "UtteranceResendNeedsConfirmation": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": false,
+            "title": "Ok",
+            "default": false
+          },
+          "requires_confirmation": {
+            "type": "boolean",
+            "const": true,
+            "title": "Requires Confirmation",
+            "default": true
+          },
+          "original_job_id": {
+            "type": "string",
+            "title": "Original Job Id"
+          },
+          "new_job_id": {
+            "type": "string",
+            "title": "New Job Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "original_job_id",
+          "new_job_id"
+        ],
+        "title": "UtteranceResendNeedsConfirmation",
+        "description": "未确认的 resend 响应。ok 必须为 false；是否入队由业务层执行，本模型不得表示已成功入队。"
+      },
+      "UtteranceResendQueued": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true,
+            "title": "Ok",
+            "default": true
+          },
+          "state": {
+            "type": "string",
+            "const": "queued",
+            "title": "State",
+            "default": "queued"
+          },
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "job_id",
+          "text"
+        ],
+        "title": "UtteranceResendQueued"
+      },
+      "UtteranceResendRequest": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "original_job_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Original Job Id"
+          },
+          "confirm": {
+            "type": "boolean",
+            "title": "Confirm",
+            "default": false
+          },
+          "focus_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Focus Id",
+            "description": "覆盖继承自原 job 的焦点。桌面重复键传按键时的焦点；省略则沿用原 job 焦点"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "job_id",
+          "text",
+          "original_job_id"
+        ],
+        "title": "UtteranceResendRequest",
+        "description": "original_job_id 必填：不得靠省略原 id 绕过 delivery_unknown 确认。"
+      },
+      "UtteranceSource": {
+        "type": "string",
+        "enum": [
+          "desktop",
+          "web",
+          "resend"
+        ],
+        "title": "UtteranceSource"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "AppConfig": {
+        "additionalProperties": true,
+        "description": "持久化配置的已知字段。未在此声明的键由存取层原样保留。\n\n默认值只用于缺省键，不会在加载时改写磁盘。不把未选定项写成用户已选事实。",
+        "properties": {
+          "ollama_model": {
+            "default": "qwen3.5:4b",
+            "title": "Ollama Model",
+            "type": "string"
+          },
+          "whisper_model": {
+            "default": "small",
+            "title": "Whisper Model",
+            "type": "string"
+          },
+          "whisper_language": {
+            "default": "zh",
+            "title": "Whisper Language",
+            "type": "string"
+          },
+          "custom_keywords": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Custom Keywords",
+            "type": "array"
+          },
+          "translate_target_lang": {
+            "default": "zh",
+            "title": "Translate Target Lang",
+            "type": "string"
+          },
+          "baidu_appid": {
+            "default": "",
+            "title": "Baidu Appid",
+            "type": "string"
+          },
+          "baidu_appkey": {
+            "default": "",
+            "title": "Baidu Appkey",
+            "type": "string"
+          },
+          "hotkey_voice": {
+            "default": "ctrl+alt+z",
+            "title": "Hotkey Voice",
+            "type": "string"
+          },
+          "hotkey_screenshot": {
+            "default": "ctrl+alt+x",
+            "title": "Hotkey Screenshot",
+            "type": "string"
+          },
+          "hotkey_repeat": {
+            "default": "ctrl+alt+r",
+            "title": "Hotkey Repeat",
+            "type": "string"
+          },
+          "vision_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Vision Model"
+          },
+          "voice_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Voice Mode"
+          },
+          "asr_sidecar_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Asr Sidecar Url"
+          },
+          "ollama_base_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ollama Base Url"
+          },
+          "polish_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Polish Enabled"
+          }
+        },
+        "title": "AppConfig",
+        "type": "object"
+      },
+      "ErrorBody": {
+        "additionalProperties": false,
+        "description": "所有能力接口失败时的结构化错误体。",
+        "properties": {
+          "ok": {
+            "const": false,
+            "default": false,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "error": {
+            "$ref": "#/components/schemas/ErrorCode"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "details": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Details"
+          }
+        },
+        "required": [
+          "error",
+          "message"
+        ],
+        "title": "ErrorBody",
+        "type": "object"
+      },
+      "JobQueryResponseEnvelope": {
+        "description": "job 查询响应信封，供 OpenAPI 引用。",
+        "discriminator": {
+          "mapping": {
+            "false": "#/components/schemas/JobQueryUnknown",
+            "true": "#/components/schemas/JobQueryFound"
+          },
+          "propertyName": "found"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/JobQueryFound"
+          },
+          {
+            "$ref": "#/components/schemas/JobQueryUnknown"
+          }
+        ],
+        "title": "JobQueryResponseEnvelope"
+      },
+      "JobStoreDocument": {
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 1,
+            "default": 1,
+            "title": "Version",
+            "type": "integer"
+          },
+          "jobs": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JobRecord"
+            },
+            "title": "Jobs",
+            "type": "object"
+          }
+        },
+        "title": "JobStoreDocument",
+        "type": "object"
+      },
+      "ProductDeliveryUnknownEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "event": {
+            "const": "delivery_unknown",
+            "default": "delivery_unknown",
+            "title": "Event",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Text"
+          }
+        },
+        "required": [
+          "job_id"
+        ],
+        "title": "ProductDeliveryUnknownEvent",
+        "type": "object"
+      },
+      "ProductHistoryWriteFailedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "event": {
+            "const": "history_write_failed",
+            "default": "history_write_failed",
+            "title": "Event",
+            "type": "string"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Job Id"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ErrorCode"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "ProductHistoryWriteFailedEvent",
+        "type": "object"
+      },
+      "ProductPartialEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "event": {
+            "const": "partial",
+            "default": "partial",
+            "title": "Event",
+            "type": "string"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Session Id"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Job Id"
+          },
+          "stable_text": {
+            "default": "",
+            "title": "Stable Text",
+            "type": "string"
+          },
+          "tail_text": {
+            "default": "",
+            "title": "Tail Text",
+            "type": "string"
+          }
+        },
+        "title": "ProductPartialEvent",
+        "type": "object"
+      },
+      "ProductPolishingEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "event": {
+            "const": "polishing",
+            "default": "polishing",
+            "title": "Event",
+            "type": "string"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Job Id"
+          }
+        },
+        "title": "ProductPolishingEvent",
+        "type": "object"
+      },
+      "ProductRecordingEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "event": {
+            "const": "recording",
+            "default": "recording",
+            "title": "Event",
+            "type": "string"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Session Id"
+          }
+        },
+        "title": "ProductRecordingEvent",
+        "type": "object"
+      },
+      "ProductSSEEventEnvelope": {
+        "description": "产品事件 SSE 一条事件的显式信封。",
+        "discriminator": {
+          "mapping": {
+            "busy": "#/components/schemas/ProductBusyEvent",
+            "delivery_unknown": "#/components/schemas/ProductDeliveryUnknownEvent",
+            "error": "#/components/schemas/ProductErrorEvent",
+            "history_write_failed": "#/components/schemas/ProductHistoryWriteFailedEvent",
+            "idle": "#/components/schemas/ProductIdleEvent",
+            "partial": "#/components/schemas/ProductPartialEvent",
+            "polishing": "#/components/schemas/ProductPolishingEvent",
+            "recording": "#/components/schemas/ProductRecordingEvent",
+            "typed": "#/components/schemas/ProductTypedEvent"
+          },
+          "propertyName": "event"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ProductIdleEvent"
+          },
+          {
+            "$ref": "#/components/schemas/ProductRecordingEvent"
+          },
+          {
+            "$ref": "#/components/schemas/ProductPartialEvent"
+          },
+          {
+            "$ref": "#/components/schemas/ProductPolishingEvent"
+          },
+          {
+            "$ref": "#/components/schemas/ProductTypedEvent"
+          },
+          {
+            "$ref": "#/components/schemas/ProductErrorEvent"
+          },
+          {
+            "$ref": "#/components/schemas/ProductBusyEvent"
+          },
+          {
+            "$ref": "#/components/schemas/ProductHistoryWriteFailedEvent"
+          },
+          {
+            "$ref": "#/components/schemas/ProductDeliveryUnknownEvent"
+          }
+        ],
+        "title": "ProductSSEEventEnvelope"
+      },
+      "ProductTypedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "event": {
+            "const": "typed",
+            "default": "typed",
+            "title": "Event",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "text": {
+            "default": "",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id"
+        ],
+        "title": "ProductTypedEvent",
+        "type": "object"
+      },
+      "SessionErrorEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "event": {
+            "const": "error",
+            "default": "error",
+            "title": "Event",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "error": {
+            "$ref": "#/components/schemas/ErrorCode"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "details": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Details"
+          }
+        },
+        "required": [
+          "session_id",
+          "error",
+          "message"
+        ],
+        "title": "SessionErrorEvent",
+        "type": "object"
+      },
+      "SessionFinalEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "event": {
+            "const": "final",
+            "default": "final",
+            "title": "Event",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Language"
+          }
+        },
+        "required": [
+          "session_id",
+          "text"
+        ],
+        "title": "SessionFinalEvent",
+        "type": "object"
+      },
+      "SessionPartialEvent": {
+        "additionalProperties": false,
+        "description": "会话 partial 的唯一字段是 stable_text / tail_text，不并行维护 stable/tail 或独立 text。",
+        "properties": {
+          "event": {
+            "const": "partial",
+            "default": "partial",
+            "title": "Event",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "stable_text": {
+            "default": "",
+            "title": "Stable Text",
+            "type": "string"
+          },
+          "tail_text": {
+            "default": "",
+            "title": "Tail Text",
+            "type": "string"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Language"
+          },
+          "audio_end_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Audio End S"
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "title": "SessionPartialEvent",
+        "type": "object"
+      },
+      "SessionSSEEventEnvelope": {
+        "description": "识别会话 SSE 一条事件的显式信封，供 OpenAPI components.schemas 引用。",
+        "discriminator": {
+          "mapping": {
+            "closed": "#/components/schemas/SessionClosedEvent",
+            "error": "#/components/schemas/SessionErrorEvent",
+            "final": "#/components/schemas/SessionFinalEvent",
+            "partial": "#/components/schemas/SessionPartialEvent"
+          },
+          "propertyName": "event"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/SessionPartialEvent"
+          },
+          {
+            "$ref": "#/components/schemas/SessionFinalEvent"
+          },
+          {
+            "$ref": "#/components/schemas/SessionErrorEvent"
+          },
+          {
+            "$ref": "#/components/schemas/SessionClosedEvent"
+          }
+        ],
+        "title": "SessionSSEEventEnvelope"
+      },
+      "SttRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Language"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Context"
+          }
+        },
+        "title": "SttRequest",
+        "type": "object"
+      },
+      "UtteranceFromAudio": {
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "source": {
+            "const": "web",
+            "default": "web",
+            "title": "Source",
+            "type": "string"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Language"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Context"
+          }
+        },
+        "required": [
+          "job_id"
+        ],
+        "title": "UtteranceFromAudio",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "VoiceToken": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Voice-Token",
+        "description": "局域网路径需要 token。也接受 Authorization: Bearer。仅本机路径即使带 token 也不对远程放行。不要把真实生产 token 写入示例。"
+      }
+    }
+  },
+  "x-auth-matrix": {
+    "local_socket": "只看 socket 对端 loopback（127.0.0.1 / ::1，含 IPv4-mapped）；忽略 X-Forwarded-For",
+    "lan_peer": "仅 RFC1918、IPv6 ULA fc00::/7、链路本地 169.254/16 与 fe80::/10。198.18/15、TEST-NET、其他保留/文档网段与公网都不是局域网。无法解析的对端拒绝。IPv4-mapped IPv6 先还原再判定。",
+    "lan_token": "本机 loopback 免 token；或先判定对端为允许的局域网再恒定时间校验 token。不是任意对端+token。公网即使 token 正确也 403。",
+    "host": "必须显式带服务端口。本机请求 Host 只能是 127.0.0.1 / localhost / ::1；局域网请求 Host 必须是允许的局域网地址。缺 Origin 的非浏览器请求仍受 Host 约束，防 DNS rebinding。TestClient 默认 Host testserver 不在白名单，测试须显式配置可信 Host，生产不得放行任意 Host。",
+    "origin": "若存在 Origin，必须 https、端口正确，且与 Host 和对端类型一致：本机 Origin 不能搭私网 Host。未知 Origin 拒绝。缺 Origin 视为非浏览器，跳过 CSRF Origin 检查，但不等于未知 Origin，仍受对端 / token / Host 约束。无 CORS *。",
+    "status_ok": "GET /api/v1/status 的 ok 只表示本接口响应成功，不是可上线；未满足的切流条件在 unmet_gates。"
+  }
+}

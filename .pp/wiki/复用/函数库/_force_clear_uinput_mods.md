@@ -11,6 +11,10 @@ logic_flow: |
     Syn --> Done
 ---
 
+<!-- seg2-cutover -->
+> **切流后现状（2026-11-10，seg2）**：已迁到 `_linux/modifiers.py` ModifierJanitor（clear_uinput / clear_xtest / clear_pynput / release_hotkey / release_seat_grab / panic_release_all）。
+> 下文为切流前实现记录，行号指旧 daemon.py/app.py，仅作历史参考。
+
 # `_force_clear_uinput_mods`
 
 ## 表格区块

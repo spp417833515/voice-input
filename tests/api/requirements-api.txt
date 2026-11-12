@@ -1,0 +1,7 @@
+# Isolated API-layer test extras. Install only into .pp/tmp/l1/venv-test.
+# Do not install into the project .venv. Do not edit the shared requirements.txt
+# without an explicit decision.
+python-multipart==0.0.20
+qrcode>=7.4
+# 隔离 TLS 回环链路测试（tests/integration/test_desktop_chain_tls.py）用，与生产 requirements 同版本
+uvicorn==0.35.0

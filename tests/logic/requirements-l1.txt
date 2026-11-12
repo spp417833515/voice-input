@@ -1,0 +1,6 @@
+# Isolated L1 test dependencies. Do not install into the project .venv.
+pytest==8.4.2
+fastapi==0.116.1
+httpx==0.28.1
+Pillow>=10.0
+pytesseract>=0.3.10

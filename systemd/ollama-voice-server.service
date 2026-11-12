@@ -1,20 +1,23 @@
+# 模板：install.sh 经 _v3/units.py 渲染到 ~/.config/systemd/user；@...@ 为占位符，不要直接复制。
 [Unit]
-Description=Ollama Voice Input - Web 服务器
-After=network.target ollama.service
+Description=Ollama Voice Input - Web 服务器（v1 API + static/v3 界面，https）
+After=network.target ollama-voice-asr.service ollama-voice-ollama.service
 StartLimitBurst=5
 StartLimitIntervalSec=60
 
 [Service]
+# 生产门闩（_activation 唯一来源）：未关且非 ./start.sh --acceptance 时条件不满足→跳过，不启动、不重启循环。
+ExecCondition=@VENV@/bin/python3 @DIR@/_activation.py check
+RestartPreventExitStatus=78
 Type=simple
-WorkingDirectory=/home/spp/桌面/ollama-voice-input
+WorkingDirectory=@DIR@
 Environment=PYTHONUNBUFFERED=1
-Environment=LD_LIBRARY_PATH=/home/spp/桌面/ollama-voice-input/.venv/lib/python3.12/site-packages/nvidia/cublas/lib:/home/spp/桌面/ollama-voice-input/.venv/lib/python3.12/site-packages/nvidia/cudnn/lib:/home/spp/桌面/ollama-voice-input/.venv/lib/python3.12/site-packages/nvidia/cuda_nvrtc/lib
+@CUDA_ENV@
 ExecStartPre=-/usr/bin/fuser -k -TERM 17945/tcp
 # 证书缺失时自动生成（手机浏览器需 https 才能网页内录音）
-ExecStartPre=/bin/bash -c 'test -f /home/spp/桌面/ollama-voice-input/certs/cert.pem || /home/spp/桌面/ollama-voice-input/gen_cert.sh'
-# 绑定 0.0.0.0 + https 供局域网手机/其他电脑访问录音页；危险接口由 app.py 中间件限本机 +
-# 网页录入接口用 token 鉴权，未授权者即使连上端口也拿不到注入/装软件能力。
-ExecStart=/home/spp/桌面/ollama-voice-input/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 17945 --ssl-keyfile /home/spp/桌面/ollama-voice-input/certs/key.pem --ssl-certfile /home/spp/桌面/ollama-voice-input/certs/cert.pem
+ExecStartPre=/bin/bash -c 'test -f @DIR@/certs/cert.pem || @DIR@/gen_cert.sh'
+# 绑定 0.0.0.0 + https 供局域网手机访问；本机/局域网权限由 _v3.auth 统一判定（局域网只给令牌页）。
+ExecStart=@VENV@/bin/uvicorn --factory app:create_production_app --host 0.0.0.0 --port 17945 --ssl-keyfile @DIR@/certs/key.pem --ssl-certfile @DIR@/certs/cert.pem
 Restart=on-failure
 RestartSec=3
 

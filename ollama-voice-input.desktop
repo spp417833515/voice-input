@@ -8,4 +8,4 @@ Type=Application
 Icon=audio-input-microphone
 Categories=Utility;Audio;Accessibility;
 StartupNotify=false
-Keywords=voice;input;translate;screenshot;ollama;whisper;
+Keywords=voice;input;translate;screenshot;ollama;qwen;asr;

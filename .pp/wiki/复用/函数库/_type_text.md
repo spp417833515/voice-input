@@ -26,6 +26,10 @@ logic_flow: |
     T4 -->|失败| Raise([RuntimeError])
 ---
 
+<!-- seg2-cutover -->
+> **切流后现状（2026-11-10，seg2）**：注入单一来源：`_linux/paste_backend.py` LinuxPasteBackend.deliver（IBus → 剪贴板粘贴 uinput/xdotool/wtype/pynput；先存剪贴板、写入校验、粘贴、仅当仍是本次文本时恢复）；证据 → ack：发出完整 = complete，没写进剪贴板/无通道 = none，中途异常 = partial_or_unknown（不再回退重粘）。
+> 下文为切流前实现记录，行号指旧 daemon.py/app.py，仅作历史参考。
+
 # `_type_text`
 
 ## 表格区块

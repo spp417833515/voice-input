@@ -1,0 +1,19 @@
+# 模板：install.sh 经 _v3/units.py 渲染到 ~/.config/systemd/user；@...@ 为占位符，不要直接复制。
+# 项目内用户级 Ollama（设置页“安装 Ollama”解压到项目缓存，不用 sudo）；只绑回环 11434。
+[Unit]
+Description=Ollama Voice Input - 本地 Ollama（127.0.0.1:11434，纠错/翻译 qwen3.5:4b）
+ConditionPathExists=@OLLAMA_BIN@
+
+[Service]
+# 生产门闩（_activation 唯一来源）：未关且非 ./start.sh --acceptance 时条件不满足→跳过，不启动、不重启循环。
+ExecCondition=@VENV@/bin/python3 @DIR@/_activation.py check
+RestartPreventExitStatus=78
+Type=simple
+Environment=OLLAMA_HOST=127.0.0.1:11434
+Environment=OLLAMA_MODELS=@OLLAMA_MODELS@
+ExecStart=@OLLAMA_BIN@ serve
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

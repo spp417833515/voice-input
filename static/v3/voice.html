@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="referrer" content="no-referrer" />
+  <script src="js/business/context.js"></script>
+  <script>
+    if (window.V3Business && typeof window.V3Business.adoptTokenFromLocation === "function") {
+      window.V3Business.adoptTokenFromLocation();
+    }
+  </script>
+  <title>语音录入</title>
+  <link rel="stylesheet" href="css/theme.css" />
+  <link rel="stylesheet" href="css/voice.css" />
+</head>
+<body class="v3-voice">
+  <div id="app"></div>
+
+<script src="js/dom.js"></script>
+<script src="js/labels.js"></script>
+<script src="js/icons.js"></script>
+<script src="js/defaults.js"></script>
+<script src="js/confirm.js"></script>
+<script src="js/history.js"></script>
+
+<script src="js/voice.js"></script>
+  <script src="js/business/catalog.js"></script>
+  <script src="js/business/job-id.js"></script>
+  <script src="js/business/http.js"></script>
+  <script src="js/business/sse.js"></script>
+  <script src="js/business/clipboard.js"></script>
+  <script src="js/business/audio.js"></script>
+  <script src="js/business/map-setup.js"></script>
+  <script src="js/business/setup-controller.js"></script>
+  <script src="js/business/status-controller.js"></script>
+  <script src="js/business/translate-controller.js"></script>
+  <script src="js/business/voice-controller.js"></script>
+  <script src="js/business/bootstrap.js" data-page="voice"></script>
+  <script>
+    /* 离线夹具与测试仍通过 window.__V3_HOOKS__ 注入；未启动业务时 bootstrap 回退为纯展示。 */
+  </script>
+</body>
+</html>

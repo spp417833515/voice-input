@@ -18,6 +18,10 @@ logic_flow: |
     MM -->|全失败| Err502_T([HTTP 502 翻译失败])
 ---
 
+<!-- seg2-cutover -->
+> **切流后现状（2026-11-10，seg2）**：截图翻译只走 `POST /api/v1/ocr-translate`（Tesseract + 本地 qwen3.5:4b，`_ocr.py`/`_translate.py`），在线翻译与百度/Google 已删除。浮层页 `/overlay-translate` 自己发请求，图片由守护进程以 document-start 脚本注入 `window.__V3_TRANSLATE_IMAGE__`（`_overlay.translate_image_script`）。
+> 下文为切流前实现记录，行号指旧 daemon.py/app.py，仅作历史参考。
+
 # 截图OCR翻译
 
 ## 一句话定位

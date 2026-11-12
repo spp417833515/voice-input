@@ -1,6 +1,9 @@
 #!/bin/bash
-# Ollama Voice Input —— 快速重启 systemd 用户服务
+# Ollama Voice Input —— 快速重启 systemd 用户服务（server + daemon）
 # 用法: ./restart.sh
+#
+# 只在“门闩已关闭”或“当前处于 ./start.sh --acceptance 验收运行（存在验收 drop-in）”时重启；
+# 否则 fail-closed 拒绝（不同步、不 restart）。从不 sudo、不 enable。单元同步只走 install.sh --update。
 
 set -e
 
@@ -8,6 +11,7 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 SYSTEMD_DIR="$HOME/.config/systemd/user"
 SERVER_SERVICE="ollama-voice-server.service"
 DAEMON_SERVICE="ollama-voice-daemon.service"
+GATED_EXIT=78
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -31,31 +35,25 @@ import_session_env() {
         DBUS_SESSION_BUS_ADDRESS >/dev/null 2>&1 || true
 }
 
-ensure_services_installed() {
-    local needs_install=0
-
-    [ ! -f "$SYSTEMD_DIR/$SERVER_SERVICE" ] && needs_install=1
-    [ ! -f "$SYSTEMD_DIR/$DAEMON_SERVICE" ] && needs_install=1
-    [ "$DIR/install.sh" -nt "$SYSTEMD_DIR/$SERVER_SERVICE" ] && needs_install=1
-    [ "$DIR/install.sh" -nt "$SYSTEMD_DIR/$DAEMON_SERVICE" ] && needs_install=1
-    [ "$DIR/systemd/$SERVER_SERVICE" -nt "$SYSTEMD_DIR/$SERVER_SERVICE" ] && needs_install=1
-    [ "$DIR/systemd/$DAEMON_SERVICE" -nt "$SYSTEMD_DIR/$DAEMON_SERVICE" ] && needs_install=1
-
-    if [ "$needs_install" -eq 1 ]; then
-        echo -e "${YELLOW}[1/2] 同步 systemd 服务定义...${NC}"
-        bash "$DIR/install.sh" --update
-    fi
-}
-
 echo -e "${YELLOW}正在重启 Ollama Voice Input...${NC}"
 echo ""
 
 require_user_systemd
+
+# ---------- 0. 生产门闩（fail-closed）----------
+if [ -f "$SYSTEMD_DIR/$SERVER_SERVICE.d/acceptance.conf" ]; then
+    echo -e "${YELLOW}  验收运行中：官方/真机门闩仍未关闭${NC}"
+    OVI_ACCEPTANCE_RUN=1 python3 "$DIR/_activation.py" check >/dev/null
+elif ! env -u OVI_ACCEPTANCE_RUN python3 "$DIR/_activation.py" check >/dev/null; then
+    echo -e "${RED}  未重启任何服务。${NC}"
+    exit "$GATED_EXIT"
+fi
+
 import_session_env
-ensure_services_installed
+echo -e "${YELLOW}[1/2] 同步 systemd 服务定义...${NC}"
+bash "$DIR/install.sh" --update
 
 echo -e "${YELLOW}[2/2] 重启用户服务...${NC}"
-systemctl --user daemon-reload
 systemctl --user restart "$SERVER_SERVICE" "$DAEMON_SERVICE"
 sleep 1
 
@@ -76,6 +74,6 @@ fi
 echo ""
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}  重启完成！${NC}"
-echo -e "${GREEN}  配置页面: http://127.0.0.1:17945/setup${NC}"
+echo -e "${GREEN}  配置页面: https://127.0.0.1:17945/setup${NC}"
 echo -e "${GREEN}  日志查看: journalctl --user -u $SERVER_SERVICE -u $DAEMON_SERVICE -f${NC}"
 echo -e "${GREEN}========================================${NC}"

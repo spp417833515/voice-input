@@ -1,0 +1,781 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>方向 B · 控制台 — 语音输入 v3 设计模板</title>
+<style>
+/* ===== 设计令牌（方向 B）：默认浅色（用户指定），深色只覆盖颜色变量 ===== */
+:root {
+  --font-sans: "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  --fs-xs: 12px; --fs-sm: 13px; --fs-md: 14px; --fs-lg: 16px; --fs-xl: 20px; --fs-caption: 20px;
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
+  --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px; --radius-pill: 999px;
+  --dur-fast: 120ms;
+  /* 悬浮层（状态胶囊 / 字幕 / 截图工具条）两种主题下都保持深色，保证盖在任何应用上都可读 */
+  --hud-bg: rgba(15, 17, 23, 0.94); --hud-border: rgba(255, 255, 255, 0.08); --hud-text: #eef0f6; --hud-muted: #9aa3b8;
+  --hud-unstable: #a5b4fc; --hud-rec: #ff7b72; --hud-ok: #56d364; --hud-busy: #e3b341; --hud-danger: #ff7b72;
+  --hud-mark: rgba(86, 211, 100, 0.22); --shadow-hud: 0 12px 32px rgba(0, 0, 0, 0.45);
+  /* 原位覆盖补丁：真实实现取原图该行的背景色，这里用示例值 */
+  --patch-bg: #fbfbf8; --patch-text: #1b1f24; --patch-edge: rgba(124, 140, 255, 0.55);
+}
+[data-theme="dark"] {
+  --c-bg: #0f1115; --c-surface: #161920; --c-surface-2: #1d212a; --c-text: #e6e8ee; --c-muted: #8b93a7; --c-border: #2a2f3a;
+  --c-accent: #7c8cff; --c-accent-hover: #95a2ff; --c-on-accent: #0f1115; --c-accent-soft: rgba(124, 140, 255, 0.14);
+  --c-ok: #3fb950; --c-ok-soft: rgba(63, 185, 80, 0.14); --c-warn: #d29922; --c-warn-soft: rgba(210, 153, 34, 0.14);
+  --c-danger: #f85149; --c-danger-soft: rgba(248, 81, 73, 0.14); --c-mark: rgba(63, 185, 80, 0.22); --c-del: rgba(248, 81, 73, 0.22);
+  --shadow-1: 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+[data-theme="light"] {
+  --c-bg: #f5f6fa; --c-surface: #ffffff; --c-surface-2: #f0f2f7; --c-text: #1b1f2a; --c-muted: #5d6578; --c-border: #dde1ea;
+  --c-accent: #4f5bd5; --c-accent-hover: #3f4bc4; --c-on-accent: #ffffff; --c-accent-soft: #eceefe;
+  --c-ok: #1a7f37; --c-ok-soft: #dafbe1; --c-warn: #9a6700; --c-warn-soft: #fff8c5;
+  --c-danger: #cf222e; --c-danger-soft: #ffebe9; --c-mark: #dafbe1; --c-del: #ffebe9;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+/* ===== 演示外壳（不属于设计） ===== */
+:root { --demo-bg: #e9ebee; --demo-ink: #24292f; --demo-line: #c9ced4; }
+* { box-sizing: border-box; }
+body { margin: 0; font-family: var(--font-sans); color: var(--demo-ink); background: var(--demo-bg); }
+.demo-head { position: sticky; top: 0; z-index: 50; background: var(--demo-bg); border-bottom: 1px solid var(--demo-line); padding: 12px 20px; }
+.demo-head h1 { margin: 0 0 4px; font-size: 18px; display: flex; gap: 12px; align-items: center; }
+.demo-head p { margin: 0 0 10px; font-size: 13px; color: #57606a; max-width: 1150px; }
+.demo-tabs, .demo-states { display: flex; flex-wrap: wrap; gap: 6px; }
+.demo-states { margin-top: 8px; }
+.demo-head button { font: inherit; font-size: 13px; padding: 5px 12px; border: 1px solid var(--demo-line); border-radius: 999px; background: #fff; color: var(--demo-ink); cursor: pointer; }
+.demo-head button.on { background: #24292f; color: #fff; border-color: #24292f; }
+.surface { display: none; padding: 20px; gap: 20px; grid-template-columns: minmax(0, 1fr) 340px; align-items: start; max-width: 1500px; }
+.surface.on { display: grid; }
+@media (max-width: 1200px) { .surface.on { grid-template-columns: 1fr; } }
+.notes { background: #fff; border: 1px solid var(--demo-line); border-radius: 10px; padding: 14px 16px; font-size: 13px; line-height: 1.6; color: var(--demo-ink); }
+.notes h3 { margin: 0 0 6px; font-size: 14px; }
+.notes h4 { margin: 12px 0 4px; font-size: 13px; color: #57606a; }
+.notes ul { margin: 0; padding-left: 18px; }
+.notes code { font-family: var(--font-mono); font-size: 12px; background: #f3f4f6; padding: 0 4px; border-radius: 4px; }
+.notes .new { color: #8250df; font-weight: 600; }
+[hidden] { display: none !important; }
+
+/* ===== 公共原子 ===== */
+.ic { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.btn { display: inline-flex; align-items: center; gap: var(--sp-1); font: inherit; font-size: var(--fs-sm); padding: 6px 14px; border-radius: var(--radius-sm); border: 1px solid var(--c-border); background: var(--c-surface-2); color: var(--c-text); cursor: pointer; white-space: nowrap; }
+.btn:hover { border-color: var(--c-accent); }
+.btn.primary { background: var(--c-accent); border-color: var(--c-accent); color: var(--c-on-accent); }
+.btn.ghost { background: transparent; }
+.btn.danger { color: var(--c-danger); }
+.btn.sm { padding: 3px 10px; font-size: var(--fs-xs); }
+.btn:disabled { opacity: .55; cursor: default; }
+.tag { display: inline-flex; align-items: center; gap: var(--sp-1); font-size: var(--fs-xs); padding: 2px 8px; border-radius: var(--radius-pill); background: var(--c-surface-2); color: var(--c-muted); white-space: nowrap; }
+.tag.ok { background: var(--c-ok-soft); color: var(--c-ok); } .tag.warn { background: var(--c-warn-soft); color: var(--c-warn); }
+.tag.danger { background: var(--c-danger-soft); color: var(--c-danger); } .tag.accent { background: var(--c-accent-soft); color: var(--c-accent); }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; background: var(--c-muted); }
+.dot.ok { background: var(--c-ok); } .dot.warn { background: var(--c-warn); } .dot.err { background: var(--c-danger); }
+.mono { font-family: var(--font-mono); }
+.muted { color: var(--c-muted); }
+.progress { height: 6px; border-radius: var(--radius-pill); background: var(--c-surface-2); overflow: hidden; }
+.progress > i { display: block; height: 100%; background: var(--c-accent); }
+.switch { position: relative; width: 40px; height: 22px; border-radius: var(--radius-pill); background: var(--c-border); border: 0; cursor: pointer; flex: none; }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--c-text); transition: left var(--dur-fast); }
+.switch[aria-checked="true"] { background: var(--c-accent); }
+.switch[aria-checked="true"]::after { left: 21px; background: var(--c-on-accent); }
+.seg { display: inline-flex; padding: 2px; border-radius: var(--radius-sm); background: var(--c-surface-2); border: 1px solid var(--c-border); }
+.seg button { font: inherit; font-size: var(--fs-sm); padding: 4px 12px; border: 0; border-radius: 4px; background: transparent; color: var(--c-muted); cursor: pointer; }
+.seg button.on { background: var(--c-surface); color: var(--c-text); box-shadow: var(--shadow-1); }
+.field { font: inherit; font-size: var(--fs-sm); padding: var(--sp-2) var(--sp-3); border: 1px solid var(--c-border); border-radius: var(--radius-sm); background: var(--c-bg); color: var(--c-text); }
+
+/* ===== 1 设置/管理页：侧栏应用 ===== */
+.app { display: grid; grid-template-columns: 210px minmax(0, 1fr); height: 720px; background: var(--c-bg); color: var(--c-text); border: 1px solid var(--c-border); border-radius: var(--radius-lg); overflow: hidden; font-size: var(--fs-md); }
+.side { background: var(--c-surface); border-right: 1px solid var(--c-border); padding: var(--sp-4) var(--sp-2); display: flex; flex-direction: column; gap: 2px; }
+.brand { display: flex; align-items: center; gap: var(--sp-2); padding: 0 var(--sp-3) var(--sp-4); font-weight: 700; }
+.brand .logo { width: 26px; height: 26px; border-radius: 8px; background: var(--c-accent); color: var(--c-on-accent); display: grid; place-items: center; }
+.nav { display: flex; align-items: center; gap: var(--sp-2); padding: 7px var(--sp-3); border-radius: var(--radius-sm); color: var(--c-muted); cursor: pointer; border: 0; background: transparent; font: inherit; text-align: left; }
+.nav:hover { color: var(--c-text); }
+.nav.on { background: var(--c-accent-soft); color: var(--c-accent); }
+.nav .dot { margin-left: auto; }
+.side-group { font-size: var(--fs-xs); color: var(--c-muted); padding: var(--sp-3) var(--sp-3) var(--sp-1); }
+.side-foot { margin-top: auto; padding: var(--sp-3); font-size: var(--fs-xs); color: var(--c-muted); }
+.main { overflow: auto; padding: var(--sp-5) var(--sp-6); }
+.main h1 { margin: 0; font-size: var(--fs-xl); }
+.page-head { display: flex; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-4); }
+.page-head .btn { margin-left: auto; }
+.page-sub { color: var(--c-muted); font-size: var(--fs-sm); margin: -8px 0 var(--sp-4); }
+.card { background: var(--c-surface); border: 1px solid var(--c-border); border-radius: var(--radius-md); padding: var(--sp-4); margin-bottom: var(--sp-3); }
+.card h2 { margin: 0 0 var(--sp-3); font-size: var(--fs-md); display: flex; align-items: center; gap: var(--sp-2); }
+.card h2 .right { margin-left: auto; font-weight: 400; }
+.kv { display: grid; grid-template-columns: 110px 1fr; gap: 6px var(--sp-3); font-size: var(--fs-sm); }
+.kv dt { color: var(--c-muted); } .kv dd { margin: 0; }
+.line { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3) 0; border-top: 1px solid var(--c-border); }
+.line:first-of-type { border-top: 0; padding-top: 0; }
+.line-main { flex: 1; min-width: 0; }
+.line-title { font-weight: 600; }
+.line-sub { font-size: var(--fs-xs); color: var(--c-muted); margin-top: 2px; line-height: 1.6; }
+.line-sub.err { color: var(--c-danger); }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
+.pipe { display: flex; align-items: stretch; gap: var(--sp-2); }
+.node { flex: 1; min-width: 0; padding: var(--sp-3); border-radius: var(--radius-sm); background: var(--c-surface-2); border: 1px solid var(--c-border); font-size: var(--fs-sm); }
+.node b { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-sm); }
+.node span { display: block; font-size: var(--fs-xs); color: var(--c-muted); margin-top: 4px; }
+.node.off { opacity: .55; }
+.arrow { align-self: center; color: var(--c-muted); }
+.chips { display: flex; flex-wrap: wrap; gap: var(--sp-2); padding: var(--sp-2); border: 1px solid var(--c-border); border-radius: var(--radius-sm); background: var(--c-bg); }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 6px 3px 10px; border-radius: var(--radius-pill); background: var(--c-accent-soft); color: var(--c-accent); font-size: var(--fs-sm); }
+.chip button { border: 0; background: none; color: inherit; cursor: pointer; padding: 0 2px; font: inherit; }
+.chips input { flex: 1; min-width: 160px; border: 0; background: transparent; color: var(--c-text); font: inherit; font-size: var(--fs-sm); outline: none; }
+.rules { margin: 0; padding-left: 18px; font-size: var(--fs-sm); line-height: 1.8; color: var(--c-muted); }
+.keycap { display: inline-flex; gap: 4px; }
+.keycap kbd { font-family: var(--font-mono); font-size: var(--fs-xs); padding: 3px 8px; border-radius: 5px; border: 1px solid var(--c-border); border-bottom-width: 2px; background: var(--c-surface-2); color: var(--c-text); }
+.keybox { min-width: 200px; display: flex; justify-content: center; padding: 6px; border: 1px dashed var(--c-border); border-radius: var(--radius-sm); cursor: pointer; }
+.keybox.capturing { border-color: var(--c-accent); color: var(--c-accent); font-size: var(--fs-sm); }
+.warnline { display: flex; gap: var(--sp-2); align-items: flex-start; font-size: var(--fs-xs); color: var(--c-warn); background: var(--c-warn-soft); padding: var(--sp-2) var(--sp-3); border-radius: var(--radius-sm); margin-top: var(--sp-2); }
+.rec { padding: var(--sp-3) 0; border-top: 1px solid var(--c-border); }
+.rec:first-child { border-top: 0; padding-top: 0; }
+.rec-head { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-xs); color: var(--c-muted); }
+.rec-head .acts { margin-left: auto; display: flex; gap: var(--sp-1); }
+.rec-text { margin-top: 6px; line-height: 1.7; }
+.rec-raw { margin-top: 4px; font-size: var(--fs-sm); line-height: 1.7; color: var(--c-muted); }
+.rec-raw del { background: var(--c-del); color: var(--c-danger); text-decoration: line-through; border-radius: 3px; }
+.rec-text ins { background: var(--c-mark); color: var(--c-ok); text-decoration: none; border-radius: 3px; padding: 0 1px; }
+.lan-entry { display: flex; gap: var(--sp-4); align-items: center; padding: var(--sp-3) 0; border-top: 1px solid var(--c-border); }
+.lan-entry:first-of-type { border-top: 0; padding-top: 0; }
+.qr { width: 120px; height: 120px; flex: none; border-radius: var(--radius-sm); background: #fff; color: #111; padding: 6px; }
+.steps { margin: 0; padding-left: 18px; line-height: 1.9; font-size: var(--fs-sm); }
+.ep { display: grid; grid-template-columns: 56px 150px 64px 1fr; gap: var(--sp-3); align-items: center; padding: var(--sp-2) 0; border-top: 1px solid var(--c-border); font-size: var(--fs-sm); }
+.ep:first-of-type { border-top: 0; }
+.method { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--c-accent); }
+pre.code { margin: var(--sp-2) 0 0; font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1.6; background: var(--c-bg); border: 1px solid var(--c-border); border-radius: var(--radius-sm); padding: var(--sp-3); overflow: auto; color: var(--c-text); }
+.banner { display: flex; gap: var(--sp-2); align-items: flex-start; padding: var(--sp-3) var(--sp-4); border-radius: var(--radius-sm); background: var(--c-danger-soft); color: var(--c-danger); font-size: var(--fs-sm); margin-bottom: var(--sp-3); }
+.skel { height: 12px; border-radius: 4px; background: var(--c-surface-2); margin: 6px 0; }
+
+/* ===== 2 状态胶囊 + 底部字幕条 ===== */
+.desk { position: relative; height: 580px; border-radius: var(--radius-lg); overflow: hidden; background: radial-gradient(circle at 20% 10%, #3b4a7a, transparent 45%), linear-gradient(160deg, #1f2433, #2b3247 60%, #39415a); }
+.win { position: absolute; left: 70px; top: 36px; right: 70px; height: 300px; background: #fff; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.35); overflow: hidden; color: #24292f; }
+.win-bar { height: 32px; background: #eef0f3; display: flex; align-items: center; padding: 0 12px; font-size: 12px; color: #57606a; }
+.win-body { padding: 18px 22px; font-size: 15px; line-height: 1.8; }
+.win-body .typed { background: #fff3c4; }
+.caret { display: inline-block; width: 2px; height: 1.1em; background: currentColor; vertical-align: text-bottom; animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.capsule { position: absolute; left: 20px; bottom: 50px; display: flex; align-items: center; gap: var(--sp-2); height: 36px; padding: 0 var(--sp-3); border-radius: var(--radius-pill); background: var(--hud-bg); border: 1px solid var(--hud-border); color: var(--hud-text); box-shadow: var(--shadow-hud); font-size: var(--fs-sm); cursor: grab; }
+.capsule .ic { color: var(--hud-muted); }
+.capsule.rec .ic, .capsule.rec .lbl { color: var(--hud-rec); }
+.capsule.busy .ic, .capsule.busy .lbl { color: var(--hud-busy); }
+.capsule.done .ic, .capsule.done .lbl { color: var(--hud-ok); }
+.capsule.err .ic, .capsule.err .lbl { color: var(--hud-danger); }
+.meter { display: flex; gap: 2px; align-items: center; height: 16px; }
+.meter i { width: 3px; border-radius: 2px; background: var(--hud-rec); animation: lvl .6s ease-in-out infinite alternate; }
+.meter i:nth-child(2) { animation-delay: .1s; } .meter i:nth-child(3) { animation-delay: .25s; } .meter i:nth-child(4) { animation-delay: .4s; } .meter i:nth-child(5) { animation-delay: .15s; }
+@keyframes lvl { from { height: 4px; } to { height: 16px; } }
+.time { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--hud-muted); }
+.caption { position: absolute; left: 50%; bottom: 40px; transform: translateX(-50%); width: min(760px, calc(100% - 460px)); padding: var(--sp-3) var(--sp-5) var(--sp-4); border-radius: var(--radius-lg); background: var(--hud-bg); border: 1px solid var(--hud-border); color: var(--hud-text); box-shadow: var(--shadow-hud); }
+.caption-head { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-xs); color: var(--hud-muted); margin-bottom: 6px; }
+.caption-head .right { margin-left: auto; }
+.caption-head kbd { font-family: var(--font-mono); padding: 0 6px; border: 1px solid rgba(255,255,255,.25); border-radius: 4px; color: var(--hud-text); }
+.caption-text { font-size: var(--fs-caption); line-height: 1.55; max-height: calc(1.55em * 2); overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
+.caption-text .tail { color: var(--hud-unstable); }
+.caption-text ins { text-decoration: none; background: var(--hud-mark); color: var(--hud-ok); border-radius: 4px; padding: 0 2px; }
+.caption.busy .caption-text { color: var(--hud-muted); position: relative; }
+.caption.busy .caption-text::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgba(255,255,255,.12), transparent); background-size: 40% 100%; background-repeat: no-repeat; animation: sweep 1.2s linear infinite; }
+@keyframes sweep { from { background-position: -40% 0; } to { background-position: 140% 0; } }
+.caption.err { border-color: var(--hud-danger); }
+.caption.err .caption-head { color: var(--hud-danger); }
+.caption .lbl-rec { color: var(--hud-rec); } .caption .lbl-busy { color: var(--hud-busy); } .caption .lbl-ok { color: var(--hud-ok); }
+.capsule-list { position: absolute; left: 20px; bottom: 50px; display: flex; flex-direction: column; gap: var(--sp-2); }
+.capsule-list .capsule { position: static; }
+
+/* ===== 3 截图翻译：逐行原位覆盖 ===== */
+.page { position: absolute; left: 70px; top: 36px; right: 70px; bottom: 36px; background: #fff; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.35); overflow: hidden; }
+.page-body { padding: 70px 44px 26px; font-family: Georgia, "Times New Roman", serif; color: #24292f; }
+.page-body .ln { position: relative; font-size: 17px; line-height: 30px; height: 30px; white-space: nowrap; width: max-content; }
+.page-body .ln.h { font-size: 24px; font-weight: 700; line-height: 40px; height: 40px; margin-bottom: 6px; }
+.page-body .para { margin-bottom: 12px; }
+.page-body .other { color: #57606a; font-size: 15px; line-height: 26px; margin-top: 18px; }
+.sel { position: relative; display: inline-block; }
+.sel-frame { position: absolute; inset: -8px; border: 2px solid var(--patch-edge); border-radius: 6px; pointer-events: none; }
+.scan { position: absolute; inset: -8px; overflow: hidden; border-radius: 6px; pointer-events: none; }
+.scan::after { content: ""; position: absolute; left: 0; right: 0; height: 36px; background: linear-gradient(180deg, transparent, rgba(124,140,255,.28), transparent); animation: scan 1.4s linear infinite; }
+@keyframes scan { from { top: -36px; } to { top: 100%; } }
+.tr { position: absolute; left: -3px; top: 2px; bottom: 2px; min-width: calc(100% + 6px); display: flex; align-items: center; padding: 0 3px; background: var(--patch-bg); color: var(--patch-text); font-family: var(--font-sans); font-size: 16px; white-space: nowrap; box-shadow: inset 0 -1px 0 var(--patch-edge); border-radius: 3px; }
+.ln.h .tr { font-size: 22px; font-weight: 700; }
+.box { position: absolute; left: -3px; right: -3px; top: 2px; bottom: 2px; border: 1px dashed var(--patch-edge); border-radius: 3px; background: rgba(124,140,255,.08); }
+.toolbar { position: absolute; left: -8px; top: -54px; display: flex; align-items: center; gap: var(--sp-2); padding: 6px var(--sp-2) 6px var(--sp-3); border-radius: var(--radius-md); background: var(--hud-bg); border: 1px solid var(--hud-border); color: var(--hud-text); box-shadow: var(--shadow-hud); font-family: var(--font-sans); font-size: var(--fs-sm); white-space: nowrap; }
+.toolbar .hint { color: var(--hud-muted); font-size: var(--fs-xs); }
+.toolbar.err { color: var(--hud-danger); border-color: var(--hud-danger); }
+.toolbar .sep { width: 1px; height: 20px; background: var(--hud-border); }
+.hbtn { display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: var(--fs-xs); padding: 4px 10px; border-radius: var(--radius-sm); border: 1px solid var(--hud-border); background: transparent; color: var(--hud-text); cursor: pointer; }
+.hseg { display: inline-flex; padding: 2px; border-radius: var(--radius-sm); background: rgba(255,255,255,.06); }
+.hseg button { font: inherit; font-size: var(--fs-xs); padding: 3px 10px; border: 0; border-radius: 4px; background: transparent; color: var(--hud-muted); cursor: pointer; }
+.hseg button.on { background: rgba(255,255,255,.14); color: var(--hud-text); }
+.spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255,255,255,.2); border-top-color: var(--hud-unstable); animation: rot .8s linear infinite; }
+@keyframes rot { to { transform: rotate(360deg); } }
+
+/* ===== 4 手机录音页 ===== */
+.phone { width: 390px; height: 800px; border: 10px solid #05060a; border-radius: 42px; overflow: hidden; margin: 0 auto; background: var(--c-bg); color: var(--c-text); display: flex; flex-direction: column; font-size: var(--fs-md); }
+.ph { flex: 1; overflow: auto; padding: var(--sp-5) var(--sp-4) var(--sp-4); }
+.ph-top { display: flex; align-items: center; gap: var(--sp-2); }
+.ph-top h1 { margin: 0; font-size: var(--fs-xl); }
+.ph-top .tag { margin-left: auto; }
+.ph-main { margin-top: var(--sp-4); padding: var(--sp-5) var(--sp-4) var(--sp-4); border-radius: var(--radius-lg); background: var(--c-surface); border: 1px solid var(--c-border); text-align: center; }
+.mic { position: relative; width: 156px; height: 156px; border-radius: 50%; border: 0; background: var(--c-accent); color: var(--c-on-accent); display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; font: inherit; font-size: var(--fs-lg); font-weight: 600; cursor: pointer; }
+.mic .ic { width: 40px; height: 40px; }
+.mic.rec { background: var(--c-danger); color: #fff; box-shadow: 0 0 0 10px var(--c-danger-soft), 0 0 0 22px rgba(248,81,73,.07); }
+.mic:disabled { background: var(--c-surface-2); color: var(--c-muted); }
+.stepper { display: flex; justify-content: center; gap: 0; margin: var(--sp-4) 0 var(--sp-2); font-size: var(--fs-xs); color: var(--c-muted); }
+.step { display: flex; align-items: center; gap: 6px; }
+.step::after { content: ""; width: 18px; height: 1px; background: var(--c-border); margin: 0 6px; }
+.step:last-child::after { display: none; }
+.step i { width: 8px; height: 8px; border-radius: 50%; background: var(--c-border); }
+.step.done i { background: var(--c-ok); } .step.now { color: var(--c-accent); } .step.now i { background: var(--c-accent); box-shadow: 0 0 0 3px var(--c-accent-soft); }
+.step.fail { color: var(--c-danger); } .step.fail i { background: var(--c-danger); }
+.ph-status { font-size: var(--fs-sm); color: var(--c-muted); min-height: 20px; }
+.ph-status.ok { color: var(--c-ok); } .ph-status.err { color: var(--c-danger); }
+.result { margin-top: var(--sp-3); text-align: left; border-radius: var(--radius-md); background: var(--c-surface-2); padding: var(--sp-3); }
+.result .seg { margin-bottom: var(--sp-2); }
+.result p { margin: 0; line-height: 1.7; }
+.result .row { display: flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-2); font-size: var(--fs-xs); color: var(--c-muted); }
+.result .row .btn { margin-left: auto; }
+.ph-key { margin-top: var(--sp-3); font-size: var(--fs-xs); color: var(--c-muted); }
+.ph-key kbd { font-family: var(--font-mono); padding: 1px 8px; border: 1px solid var(--c-border); border-radius: 4px; background: var(--c-surface-2); color: var(--c-text); }
+.link { font: inherit; font-size: var(--fs-xs); color: var(--c-accent); background: none; border: 0; cursor: pointer; }
+.ph-sec { margin-top: var(--sp-5); }
+.ph-sec-head { display: flex; align-items: center; margin-bottom: var(--sp-2); }
+.ph-sec-head h2 { margin: 0; font-size: var(--fs-md); }
+.ph-sec-head .link { margin-left: auto; }
+.hitem { display: flex; gap: var(--sp-3); align-items: center; width: 100%; text-align: left; font: inherit; font-size: var(--fs-sm); padding: var(--sp-3); margin-bottom: var(--sp-2); border-radius: var(--radius-md); border: 1px solid var(--c-border); background: var(--c-surface); color: var(--c-text); cursor: pointer; }
+.hitem .t { flex: 1; min-width: 0; line-height: 1.6; }
+.hitem .m { display: flex; gap: var(--sp-2); margin-top: 4px; font-size: var(--fs-xs); color: var(--c-muted); }
+.hitem .go { color: var(--c-accent); }
+.ph-banner { margin-top: var(--sp-4); padding: var(--sp-3); border-radius: var(--radius-md); background: var(--c-danger-soft); color: var(--c-danger); font-size: var(--fs-sm); line-height: 1.6; }
+.upload { display: inline-flex; align-items: center; gap: var(--sp-2); padding: var(--sp-3) var(--sp-5); border-radius: var(--radius-md); background: var(--c-accent); color: var(--c-on-accent); font-size: var(--fs-lg); font-weight: 600; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2 21h20L12 3zM12 10v5M12 18h.01"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11 12 4l9 7v9H3z"/></symbol>
+  <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6"/></symbol>
+  <symbol id="i-crop" viewBox="0 0 24 24"><path d="M6 2v16h16M2 6h16v16"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></symbol>
+  <symbol id="i-code" viewBox="0 0 24 24"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 12 20 4l-6 16-3-7z"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M6 10l6-6 6 6M4 20h16"/></symbol>
+</svg>
+
+<header class="demo-head">
+  <h1>方向 B · 控制台（功能最全）<button id="themeBtn" title="切换主题变量">切换深色 / 浅色</button></h1>
+  <p>桌面应用风格：按用户要求为亮色、左侧菜单 + 右侧内容（深色只换一组颜色变量，可在上方切换）。状态改为"左下胶囊 + 底部居中字幕条"，字幕两行大字，松开后高亮润色改动；截图翻译把译文逐行贴在原文那一行上（类似 Google Lens），工具条可切回原文、复制译文或原文。紫色"新增"标记的是现有产品里没有、需要用户拍板的能力。所有数据均为示例。</p>
+  <nav class="demo-tabs" id="tabs">
+    <button data-surface="settings">1 设置/管理页</button>
+    <button data-surface="status">2 状态栏 + 实时字幕</button>
+    <button data-surface="overlay">3 截图翻译浮窗</button>
+    <button data-surface="phone">4 手机录音页</button>
+  </nav>
+  <nav class="demo-states" id="states"></nav>
+</header>
+
+<!-- ================= 1 设置/管理页 ================= -->
+<section class="surface" id="s-settings">
+  <div class="app" id="settings-stage">
+    <aside class="side" id="side">
+      <div class="brand"><span class="logo"><svg class="ic"><use href="#i-mic"/></svg></span>语音输入</div>
+      <button class="nav" data-page="overview"><svg class="ic"><use href="#i-home"/></svg>概览</button>
+      <button class="nav" data-page="models"><svg class="ic"><use href="#i-cpu"/></svg>模型<span class="dot ok" data-show="overview models voice shot keys history lan api system"></span><span class="dot warn" data-show="pulling"></span><span class="dot err" data-show="offline"></span></button>
+      <div class="side-group">功能</div>
+      <button class="nav" data-page="voice"><svg class="ic"><use href="#i-spark"/></svg>语音输入</button>
+      <button class="nav" data-page="shot"><svg class="ic"><use href="#i-crop"/></svg>截图翻译</button>
+      <button class="nav" data-page="keys"><svg class="ic"><use href="#i-key"/></svg>快捷键</button>
+      <button class="nav" data-page="history"><svg class="ic"><use href="#i-clock"/></svg>历史记录</button>
+      <div class="side-group">连接</div>
+      <button class="nav" data-page="lan"><svg class="ic"><use href="#i-phone"/></svg>手机录入</button>
+      <button class="nav" data-page="api"><svg class="ic"><use href="#i-code"/></svg>开放接口</button>
+      <button class="nav" data-page="system"><svg class="ic"><use href="#i-shield"/></svg>系统与关于</button>
+      <div class="side-foot">v3.0.0 · 本地运行</div>
+    </aside>
+    <main class="main">
+      <!-- 概览 -->
+      <div data-show="overview offline">
+        <div class="page-head"><h1>概览</h1><span class="tag ok" data-show="overview">全部就绪</span><span class="tag danger" data-show="offline">服务不可达</span><button class="btn"><svg class="ic"><use href="#i-refresh"/></svg>刷新</button></div>
+        <div class="banner" data-show="offline"><svg class="ic"><use href="#i-alert"/></svg><span>无法连接本地服务：connect ECONNREFUSED 127.0.0.1:8765（后端原文）。确认后台服务已启动后点"刷新"。</span></div>
+        <div class="card">
+          <h2>语音输入 <span class="right muted keycap">按住 <kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Z</kbd></span></h2>
+          <div class="pipe" data-show="overview">
+            <div class="node"><b><span class="dot ok"></span>麦克风</b><span>系统默认设备</span></div><span class="arrow">→</span>
+            <div class="node"><b><span class="dot ok"></span>实时识别</b><span>Qwen3-ASR-1.7B · GPU</span></div><span class="arrow">→</span>
+            <div class="node"><b><span class="dot ok"></span>纠错润色</b><span>qwen3.5:4b · 已开启</span></div><span class="arrow">→</span>
+            <div class="node"><b><span class="dot ok"></span>输入</b><span>当前焦点窗口</span></div>
+          </div>
+          <div data-show="offline"><div class="skel" style="width:70%"></div><div class="skel" style="width:45%"></div></div>
+        </div>
+        <div class="card">
+          <h2>截图翻译 <span class="right muted keycap"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>X</kbd></span></h2>
+          <div class="pipe" data-show="overview">
+            <div class="node"><b><span class="dot ok"></span>选区截图</b><span>portal（Wayland）</span></div><span class="arrow">→</span>
+            <div class="node"><b><span class="dot ok"></span>文字识别</b><span>OCR · 逐行坐标</span></div><span class="arrow">→</span>
+            <div class="node"><b><span class="dot ok"></span>本地翻译</b><span>qwen3.5:4b · 译成中文</span></div><span class="arrow">→</span>
+            <div class="node"><b><span class="dot ok"></span>原位显示</b><span>逐行覆盖原文</span></div>
+          </div>
+          <div data-show="offline"><div class="skel" style="width:60%"></div></div>
+        </div>
+        <div class="grid2" data-show="overview">
+          <div class="card"><h2>润色纠错</h2><div class="line"><div class="line-main line-sub">松开后只纠错不改写；失败时不输入</div><button class="switch" role="switch" aria-checked="true" onclick="this.setAttribute('aria-checked', this.getAttribute('aria-checked') !== 'true')"></button></div></div>
+          <div class="card"><h2>最近一条 <span class="right tag accent">已润色</span></h2><div class="line-sub" style="font-size:var(--fs-sm);color:var(--c-text)">今天下午三点，我们在会议室讨论一下新版本的发布计划，还有 Qwen 的接入方案。</div></div>
+        </div>
+      </div>
+
+      <!-- 模型 -->
+      <div data-show="models pulling">
+        <div class="page-head"><h1>模型</h1><button class="btn"><svg class="ic"><use href="#i-refresh"/></svg>刷新</button></div>
+        <p class="page-sub">本应用固定使用两个本地模型；缺失时语音输入或截图翻译不可用。</p>
+        <div class="card">
+          <h2>语音识别 · <span class="mono">Qwen3-ASR-1.7B</span><span class="right"><span class="tag ok">已就绪</span></span></h2>
+          <dl class="kv"><dt>大小</dt><dd>3.5 GB</dd><dt>运行设备</dt><dd>GPU（CUDA）</dd><dt>用途</dt><dd>桌面实时识别、手机录音识别、开放接口 recognize</dd></dl>
+        </div>
+        <div class="card">
+          <h2>Ollama 服务<span class="right"><span class="tag ok">运行中</span></span></h2>
+          <dl class="kv"><dt>版本</dt><dd>0.12.6</dd><dt>地址</dt><dd class="mono">http://127.0.0.1:11434</dd></dl>
+          <p class="line-sub">未安装时这里是「安装 Ollama」按钮并显示安装日志；已安装未运行时是「启动 Ollama」。</p>
+        </div>
+        <div class="card">
+          <h2>纠错与翻译 · <span class="mono">qwen3.5:4b</span><span class="right"><span class="tag ok" data-show="models">已下载</span><span class="tag warn" data-show="pulling">下载中</span></span></h2>
+          <dl class="kv" data-show="models"><dt>大小</dt><dd>3.4 GB</dd><dt>用途</dt><dd>松开后纠错润色、截图翻译</dd></dl>
+          <div data-show="pulling">
+            <div class="line-sub" style="margin-bottom:6px">pulling sha256:a3c1… · 1.42 / 3.40 GB · 42%</div>
+            <div class="progress"><i style="width:42%"></i></div>
+            <div style="display:flex;gap:var(--sp-2);margin-top:var(--sp-3)"><button class="btn" disabled>下载中…</button></div>
+            <p class="line-sub err" style="margin-top:var(--sp-2)">失败示例：下载中断：read tcp …: connection reset by peer（后端原文）·「重试」</p>
+          </div>
+        </div>
+        <div class="card">
+          <h2>其他已安装的 Ollama 模型 <span class="right tag" style="color:#a78bfa">新增</span></h2>
+          <div class="line"><div class="line-main"><div class="line-title mono">qwen2.5:7b</div><div class="line-sub">4.7 GB · 本应用不再使用</div></div><button class="btn sm danger">删除</button></div>
+          <div class="line"><div class="line-main"><div class="line-title mono">gemma3:4b</div><div class="line-sub">3.0 GB · 本应用不再使用</div></div><button class="btn sm danger">删除</button></div>
+        </div>
+      </div>
+
+      <!-- 语音输入 -->
+      <div data-show="voice">
+        <div class="page-head"><h1>语音输入</h1></div>
+        <div class="card">
+          <div class="line"><div class="line-main"><div class="line-title">松开后纠错润色</div><div class="line-sub">关闭后松开即输入识别原文。开启时若润色失败：状态栏报错、不输入，按重复键 <span class="mono">Ctrl+Alt+R</span> 发送原文。</div></div><button class="switch" role="switch" aria-checked="true" onclick="this.setAttribute('aria-checked', this.getAttribute('aria-checked') !== 'true')"></button></div>
+        </div>
+        <div class="card">
+          <h2>关键词 <span class="right muted" style="font-size:var(--fs-xs)">润色时按此写法修正专有名词</span></h2>
+          <div class="chips">
+            <span class="chip">Qwen<button aria-label="移除">×</button></span><span class="chip">Ollama<button>×</button></span><span class="chip">FastAPI<button>×</button></span><span class="chip">Wayland<button>×</button></span><span class="chip">GNOME<button>×</button></span>
+            <input placeholder="输入后回车添加，可粘贴逗号/顿号分隔的一串" />
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:var(--sp-2);margin-top:var(--sp-3);align-items:center"><span class="line-sub" style="color:var(--c-ok)">已保存</span><button class="btn primary">保存</button></div>
+        </div>
+        <div class="card">
+          <h2>润色只做这四件事</h2>
+          <ul class="rules"><li>改错别字和同音词（计化 → 计划）</li><li>按关键词修专有名词（千问 → Qwen）</li><li>补全标点</li><li>去掉口头禅（嗯、那个、就是说）</li></ul>
+          <p class="line-sub">不改原意、不调语序、不扩写。</p>
+        </div>
+      </div>
+
+      <!-- 截图翻译 -->
+      <div data-show="shot">
+        <div class="page-head"><h1>截图翻译</h1></div>
+        <div class="card">
+          <div class="line"><div class="line-main"><div class="line-title">翻译成</div><div class="line-sub">本地 qwen3.5:4b，不联网</div></div>
+            <div class="seg"><button class="on">中文</button><button>英文</button><button>日文</button><button>韩文</button><button>仅识别文字</button></div></div>
+        </div>
+        <div class="card">
+          <h2>结果怎么显示</h2>
+          <p class="line-sub" style="font-size:var(--fs-sm)">译文逐行贴在原文那一行上；选区上方的工具条可以切回原文、复制译文、复制原文。Esc 或点击选区外关闭，10 秒无操作自动关闭。</p>
+        </div>
+      </div>
+
+      <!-- 快捷键 -->
+      <div data-show="keys">
+        <div class="page-head"><h1>快捷键</h1></div>
+        <div class="card">
+          <div class="line"><div class="line-main"><div class="line-title">语音输入（按住说话）</div></div><div class="keybox"><span class="keycap"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Z</kbd></span></div></div>
+          <div class="line"><div class="line-main"><div class="line-title">截图翻译</div></div><div class="keybox capturing">请按下新的组合键…（Esc 取消）</div></div>
+          <div class="line"><div class="line-main"><div class="line-title">重复上次输入</div><div class="line-sub">润色失败时发送原文；焦点切走时重新输入</div></div><div class="keybox"><span class="keycap"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>R</kbd></span></div></div>
+          <div class="warnline"><svg class="ic"><use href="#i-alert"/></svg><span><b>新增：</b>启动扫描发现 <span class="mono">ctrl+alt+x</span> 已被桌面"截图"占用，按下时可能不触发（需要后端把启动时的冲突扫描结果开放出来）。</span></div>
+          <div style="display:flex;justify-content:flex-end;gap:var(--sp-2);margin-top:var(--sp-3);align-items:center"><span class="line-sub">保存后需重启后台服务才会重新绑定</span><button class="btn primary">保存</button></div>
+        </div>
+      </div>
+
+      <!-- 历史 -->
+      <div data-show="history">
+        <div class="page-head"><h1>历史记录</h1><span class="muted" style="font-size:var(--fs-sm)">共 128 条</span>
+          <div class="seg" style="margin-left:auto"><button class="on">全部</button><button>本机</button><button>手机</button><button>重发</button></div></div>
+        <div class="card">
+          <div class="rec">
+            <div class="rec-head"><span>11-09 10:42</span><span class="tag">本机</span><span class="tag accent">已润色</span><span class="acts"><button class="btn sm ghost"><svg class="ic"><use href="#i-copy"/></svg>复制</button><button class="btn sm ghost"><svg class="ic"><use href="#i-send"/></svg>再次输入</button></span></div>
+            <div class="rec-text">今天下午三点<ins>，</ins>我们在会议室讨论一下新版本的发布<ins>计划</ins>，还有 <ins>Qwen</ins> 的接入方案<ins>。</ins></div>
+            <div class="rec-raw">原文：今天下午三点我们在会议室讨论一下新版本的发布<del>计化</del>，<del>嗯，</del>还有<del>千问</del>的接入方案</div>
+          </div>
+          <div class="rec">
+            <div class="rec-head"><span>11-09 10:37</span><span class="tag">手机</span><span class="tag danger">润色失败 · 未输入</span><span class="acts"><button class="btn sm ghost"><svg class="ic"><use href="#i-copy"/></svg>复制</button><button class="btn sm ghost"><svg class="ic"><use href="#i-send"/></svg>发送原文</button></span></div>
+            <div class="rec-text">把这个函数拆成两个，一个负责读取一个负责校验</div>
+            <div class="rec-raw" style="color:var(--c-danger)">失败原因：本地模型无响应（Ollama 未运行）</div>
+          </div>
+          <div class="rec">
+            <div class="rec-head"><span>11-09 10:31</span><span class="tag">重发</span><span class="tag">未润色</span><span class="acts"><button class="btn sm ghost"><svg class="ic"><use href="#i-copy"/></svg>复制</button><button class="btn sm ghost"><svg class="ic"><use href="#i-send"/></svg>再次输入</button></span></div>
+            <div class="rec-text">好的，收到。</div>
+          </div>
+        </div>
+        <button class="btn" style="width:100%;justify-content:center">加载更多（3 / 128）</button>
+        <p class="line-sub">"再次输入"为<b>新增</b>（现在只有手机页能重发）。改动高亮需要后端在润色结果里给出修改片段，或只并排显示两段文本。</p>
+      </div>
+
+      <!-- 手机录入 -->
+      <div data-show="lan">
+        <div class="page-head"><h1>手机录入</h1></div>
+        <div class="card">
+          <h2>扫码打开录音页</h2>
+          <div class="lan-entry"><svg class="qr" data-qr="3" viewBox="0 0 25 25"></svg><div><div class="line-title">Wi-Fi · 192.168.1.23</div><div class="line-sub mono">https://192.168.1.23:8765/voice?token=••••••••</div><button class="btn sm" style="margin-top:var(--sp-2)"><svg class="ic"><use href="#i-copy"/></svg>复制网址</button></div></div>
+          <div class="lan-entry"><svg class="qr" data-qr="11" viewBox="0 0 25 25"></svg><div><div class="line-title">有线 · 10.0.0.8</div><div class="line-sub mono">https://10.0.0.8:8765/voice?token=••••••••</div><button class="btn sm" style="margin-top:var(--sp-2)"><svg class="ic"><use href="#i-copy"/></svg>复制网址</button></div></div>
+        </div>
+        <div class="grid2">
+          <div class="card"><h2>使用步骤</h2><ol class="steps"><li>手机与电脑连同一局域网</li><li>扫码；提示不安全时点"高级 → 继续"</li><li>按住说话，松开后识别 + 润色</li><li>文字输入到电脑当前焦点窗口</li></ol></div>
+          <div class="card"><h2>安全</h2><p class="line-sub" style="font-size:var(--fs-sm)">链接带专属令牌，只有拿到二维码的人能录入。令牌疑似泄露时刷新令牌并重启服务。装软件、删模型、改配置只允许本机。</p></div>
+        </div>
+      </div>
+
+      <!-- 开放接口 -->
+      <div data-show="api">
+        <div class="page-head"><h1>开放接口</h1></div>
+        <div class="card">
+          <h2>访问令牌</h2>
+          <div class="line"><div class="line-main mono">a8f3••••••••••••••••7c21</div><button class="btn sm">显示</button><button class="btn sm"><svg class="ic"><use href="#i-copy"/></svg>复制</button></div>
+          <p class="line-sub">服务地址 <span class="mono">https://192.168.1.23:8765</span>（本机 <span class="mono">https://127.0.0.1:8765</span>）；自签证书，脚本需忽略证书校验。</p>
+        </div>
+        <div class="card">
+          <h2>接口 <span class="right line-sub">路径与字段以接口契约为准</span></h2>
+          <div class="ep"><span class="method">POST</span><span class="mono">recognize</span><span class="tag">局域网</span><span>音频 → 原始识别文本（不润色、不输入）</span></div>
+          <div class="ep"><span class="method">POST</span><span class="mono">polish</span><span class="tag">局域网</span><span>文本 → 只纠错的润色结果</span></div>
+          <div class="ep"><span class="method">POST</span><span class="mono">translate</span><span class="tag">局域网</span><span>文本 → 本地翻译</span></div>
+          <div class="ep"><span class="method">POST</span><span class="mono">ocr-translate</span><span class="tag">局域网</span><span>图片 → 逐行文字、坐标与译文</span></div>
+          <div class="ep"><span class="method">POST</span><span class="mono">type</span><span class="tag">局域网</span><span>文本 → 输入到这台电脑焦点（返回任务号）</span></div>
+          <div class="ep"><span class="method">GET</span><span class="mono">job status / history</span><span class="tag">局域网</span><span>任务进度、最近记录</span></div>
+          <div class="ep"><span class="method">POST</span><span class="mono">config / model</span><span class="tag warn">仅本机</span><span>改配置、下载/删除模型</span></div>
+        </div>
+        <div class="card">
+          <h2>示例 <span class="right"><span class="seg"><button class="on">curl</button><button>Python</button></span></span></h2>
+<pre class="code">curl -k -X POST https://192.168.1.23:8765/&lt;recognize 路径&gt; \
+  -F "audio=@voice.wav" \
+  -F "token=&lt;令牌&gt;"</pre>
+        </div>
+      </div>
+
+      <!-- 系统与关于 -->
+      <div data-show="system">
+        <div class="page-head"><h1>系统与关于</h1><button class="btn"><svg class="ic"><use href="#i-refresh"/></svg>重新检测</button></div>
+        <div class="card">
+          <h2>平台能力 <span class="right line-sub">Linux · Wayland（列表由后端按平台给出）</span></h2>
+          <div class="line"><span class="dot ok"></span><div class="line-main">portal 截图</div><span class="muted">可用</span></div>
+          <div class="line"><span class="dot ok"></span><div class="line-main">portal 全局快捷键</div><span class="muted">可用</span></div>
+          <div class="line"><span class="dot err"></span><div class="line-main">xclip（剪贴板）</div><span style="color:var(--c-danger)">不可用</span></div>
+          <div class="line"><div class="line-main line-sub">安装命令</div><span class="mono" style="font-size:var(--fs-xs)">sudo apt install xclip</span><button class="btn sm"><svg class="ic"><use href="#i-copy"/></svg></button></div>
+        </div>
+        <div class="card">
+          <h2>关于</h2>
+          <dl class="kv"><dt>版本</dt><dd>3.0.0</dd><dt>作者</dt><dd>pp（沿用现有"关于"信息）</dd><dt>源码</dt><dd>GitHub 仓库链接</dd><dt>许可</dt><dd>MIT</dd></dl>
+        </div>
+      </div>
+    </main>
+  </div>
+  <aside class="notes">
+    <h3>设置/管理页 · 数据与动作</h3>
+    <h4>显示的数据</h4>
+    <ul>
+      <li>概览：两条流水线每个环节的就绪状态、润色开关、目标语言、最近一条记录</li>
+      <li>模型：ASR 模型（大小/设备/用途）、Ollama（版本/地址/运行）、qwen3.5:4b（大小/下载进度/失败原因）、<span class="new">其他已安装的 Ollama 模型</span></li>
+      <li>历史：时间、来源、润色状态、最终文本、原文、失败原因；<span class="new">改动高亮</span>需要润色结果带修改片段</li>
+      <li>快捷键：三个组合键、<span class="new">冲突扫描结果</span>、重启提示</li>
+      <li>手机：每个网卡的 IP/网址/二维码；接口：令牌、地址、接口清单</li>
+      <li>系统：平台能力列表、安装命令、版本与关于</li>
+    </ul>
+    <h4>动作 → 接口</h4>
+    <ul>
+      <li>刷新、进入各页 → <code>status get</code> / <code>config get</code></li>
+      <li>下载/删除模型 → <code>asr model download</code>、<code>model pull</code>（流式）、<code>model delete</code></li>
+      <li>安装/启动 Ollama → <code>ollama install</code> / <code>ollama start</code></li>
+      <li>润色开关、关键词、目标语言、快捷键 → <code>config set</code></li>
+      <li>历史筛选/加载更多 → <code>history list(source, limit, offset)</code>；<span class="new">再次输入</span> → <code>resend(text)</code></li>
+      <li>手机入口、令牌 → <code>lan entry get</code></li>
+      <li>重新检测 → <code>status get</code>（含平台能力）</li>
+    </ul>
+    <h4>状态</h4>
+    <ul><li>上方切换各页；"服务不可达"显示骨架与错误原文；"模型下载中"显示流式进度与失败示例</li></ul>
+  </aside>
+</section>
+
+<!-- ================= 2 状态栏 + 实时字幕 ================= -->
+<section class="surface" id="s-status">
+  <div class="desk" id="status-stage">
+    <div class="win">
+      <div class="win-bar">文档 · 周会纪要.md</div>
+      <div class="win-body"><div style="color:#57606a">## 本周安排</div><div id="b-input"><span class="caret"></span></div></div>
+    </div>
+    <div id="b-hud"></div>
+  </div>
+  <aside class="notes">
+    <h3>状态胶囊 + 字幕条 · 数据与动作</h3>
+    <h4>显示的数据（<code>status events</code> 事件流）</h4>
+    <ul>
+      <li>胶囊：状态、录音时长、<span class="new">输入电平</span>（录音时的音量跳动，需要事件流带电平值）</li>
+      <li>字幕：<code>recognize stream</code> 部分结果 = 已稳定文本 + 未稳定尾部（后端划定）；定稿原文；润色后文本</li>
+      <li><span class="new">改动高亮</span>：润色结果里的修改片段（后端给出）；若后端不给，只显示润色后文本</li>
+      <li>错误：原因原文 + 补发键（读配置）</li>
+    </ul>
+    <h4>动作 → 接口</h4>
+    <ul>
+      <li>按住/松开语音键（平台层）→ <code>recognize stream</code> → <code>polish</code> → <code>type</code></li>
+      <li>重复键 → <code>repeat last</code>（润色失败发原文 / 焦点切走重输）</li>
+      <li>胶囊可拖动；字幕条固定在当前屏幕底部居中，只在录音到输入完成期间出现，完成 1.5 秒后淡出</li>
+    </ul>
+    <h4>规则</h4>
+    <ul>
+      <li>字幕两行 20px 大字，超出只露最新两行；未稳定尾部用浅紫色 + 光标</li>
+      <li>润色关闭时松开直接显示"已输入"，无高亮</li>
+      <li>截图流程只用胶囊（截图中 / 识别翻译中 / 完成 / 失败），不出字幕条</li>
+    </ul>
+  </aside>
+</section>
+
+<!-- ================= 3 截图翻译浮窗 ================= -->
+<section class="surface" id="s-overlay">
+  <div class="desk" style="height:620px" id="overlay-stage">
+    <div class="page">
+      <div class="win-bar">example.com/release-notes</div>
+      <div class="page-body">
+        <div class="sel">
+          <div class="ln h">Release notes 3.0<span class="tr" data-show="result">版本说明 3.0</span><span class="box" data-show="ocronly"></span></div>
+          <div class="para">
+            <div class="ln">Speech recognition now runs fully on your device,<span class="tr" data-show="result">语音识别现在完全在你的设备上运行，</span><span class="box" data-show="ocronly"></span></div>
+            <div class="ln">and the transcript appears while you are still talking.<span class="tr" data-show="result">你还在说话时，文字就已经出现。</span><span class="box" data-show="ocronly"></span></div>
+          </div>
+          <div class="para">
+            <div class="ln">When you release the hotkey, a small local model fixes<span class="tr" data-show="result">松开快捷键后，一个本地小模型会修正</span><span class="box" data-show="ocronly"></span></div>
+            <div class="ln">typos and punctuation without rewriting your meaning.<span class="tr" data-show="result">错别字和标点，而不改写你的原意。</span><span class="box" data-show="ocronly"></span></div>
+            <div class="ln">Screenshots are translated right where the text is.<span class="tr" data-show="result">截图会在原文所在的位置直接翻译。</span><span class="box" data-show="ocronly"></span></div>
+          </div>
+          <div class="sel-frame"></div>
+          <div class="scan" data-show="loading"></div>
+          <div class="toolbar" data-show="loading"><span class="spin"></span>识别翻译中…<span class="hint">Esc 取消</span></div>
+          <div class="toolbar" data-show="result"><span class="hseg"><button class="on">译文</button><button>原文</button></span><span class="sep"></span><button class="hbtn"><svg class="ic"><use href="#i-copy"/></svg>复制译文</button><button class="hbtn">复制原文</button><span class="sep"></span><span class="hint">Esc / 点击外部关闭</span><button class="hbtn" aria-label="关闭"><svg class="ic"><use href="#i-x"/></svg></button></div>
+          <div class="toolbar" data-show="ocronly"><span>已识别 6 行（未翻译）</span><span class="sep"></span><button class="hbtn"><svg class="ic"><use href="#i-copy"/></svg>复制文字</button><button class="hbtn" aria-label="关闭"><svg class="ic"><use href="#i-x"/></svg></button></div>
+          <div class="toolbar err" data-show="error"><svg class="ic"><use href="#i-alert"/></svg>翻译失败：本地模型无响应（Ollama 未运行）<span class="sep"></span><button class="hbtn">打开设置</button><button class="hbtn" aria-label="关闭"><svg class="ic"><use href="#i-x"/></svg></button></div>
+        </div>
+        <div class="other">Other text on the page that is outside the selection stays visible.</div>
+      </div>
+    </div>
+  </div>
+  <aside class="notes">
+    <h3>逐行原位翻译 · 数据与动作</h3>
+    <h4>显示的数据</h4>
+    <ul>
+      <li>选区矩形（平台层）</li>
+      <li><code>ocr-translate</code> 返回<b>每一行</b>：原文、行框坐标（相对选区）、该行译文；可选该行背景色（用来铺补丁，避免前端自己取色）</li>
+      <li>仅识别模式：每行原文与坐标（虚线框标出）</li>
+      <li>失败：原因原文</li>
+    </ul>
+    <h4>动作 → 接口</h4>
+    <ul>
+      <li>截图键 → 平台层选区 → <code>ocr-translate(image, target_lang)</code></li>
+      <li>译文/原文切换：只隐藏补丁，无接口</li>
+      <li>复制译文 / 复制原文 / 复制文字 → 本地剪贴板</li>
+      <li><span class="new">打开设置</span>（失败时）→ 打开设置窗口的模型页</li>
+      <li>Esc / 点击外部 / 10 秒无操作 → 关闭；加载 30 秒强制关闭</li>
+    </ul>
+    <h4>风险（需后端确认）</h4>
+    <ul>
+      <li>逐行翻译会把一句话拆在两行分别翻，语序可能别扭；建议后端按段翻译后再分回各行，由后端决定每行显示什么，前端只按坐标贴</li>
+      <li>译文比原文长时缩小字号到行高内，最小 12px，仍放不下则截断并在复制里给全文</li>
+    </ul>
+  </aside>
+</section>
+
+<!-- ================= 4 手机录音页 ================= -->
+<section class="surface" id="s-phone">
+  <div class="phone">
+    <div class="ph" id="phone-stage">
+      <div class="ph-top"><h1>语音录入</h1><span class="tag ok" data-show="ready rec busy done polishfail fallback"><span class="dot ok"></span>已连接电脑</span><span class="tag danger" data-show="token">未连接</span></div>
+      <div class="ph-banner" data-show="token">访问令牌无效或已更新。请在电脑"设置 → 手机录入"重新扫码进入。</div>
+      <div class="ph-main" data-show="ready rec busy done polishfail fallback">
+        <div data-show="ready rec busy done polishfail"><button class="mic" id="b-mic"><svg class="ic"><use href="#i-mic"/></svg><span id="b-mic-text">按住说话</span></button></div>
+        <div data-show="fallback">
+          <p class="ph-status" style="line-height:1.6">当前不是安全连接，浏览器不允许网页录音。<br>点下面按钮用手机系统录音：</p>
+          <label class="upload"><svg class="ic"><use href="#i-upload"/></svg>录音并上传<input type="file" accept="audio/*" capture hidden /></label>
+        </div>
+        <div class="stepper" id="b-steps"></div>
+        <div class="ph-status" id="b-status"></div>
+        <div class="result" data-show="done">
+          <div class="seg"><button class="on">润色后</button><button>原文</button></div>
+          <p>今天下午三点，我们在会议室讨论一下新版本的发布计划，还有 Qwen 的接入方案。</p>
+          <div class="row"><span class="tag accent">已润色</span><span>10:42</span><button class="btn sm"><svg class="ic"><use href="#i-copy"/></svg>复制</button></div>
+        </div>
+        <div class="result" data-show="polishfail">
+          <p class="muted" style="font-size:var(--fs-xs)">识别原文（未输入）</p>
+          <p>把这个函数拆成两个，一个负责读取一个负责校验</p>
+          <div class="row"><span class="tag danger">润色失败</span><button class="btn primary sm"><svg class="ic"><use href="#i-send"/></svg>发送原文</button></div>
+        </div>
+        <div class="ph-key" data-show="ready rec busy done polishfail">外接键盘时按住 <kbd>空格</kbd> 说话 · <button class="link">改快捷键</button></div>
+      </div>
+      <div class="ph-sec" data-show="ready rec busy done polishfail fallback">
+        <div class="ph-sec-head"><h2>最近输入</h2><button class="link">刷新</button></div>
+        <button class="hitem"><div class="t">今天下午三点，我们在会议室讨论一下新版本的发布计划，还有 Qwen 的接入方案。<div class="m"><span class="tag">手机</span><span class="tag accent">已润色</span><span>11-09 10:42</span></div></div><svg class="ic go"><use href="#i-send"/></svg></button>
+        <button class="hitem"><div class="t">好的，收到。<div class="m"><span class="tag">重发</span><span>11-09 10:31</span></div></div><svg class="ic go"><use href="#i-send"/></svg></button>
+        <button class="hitem"><div class="t">周五之前把测试报告发我。<div class="m"><span class="tag">本机</span><span>11-08 18:05</span></div></div><svg class="ic go"><use href="#i-send"/></svg></button>
+      </div>
+    </div>
+  </div>
+  <aside class="notes">
+    <h3>手机录音页 · 数据与动作</h3>
+    <h4>显示的数据</h4>
+    <ul>
+      <li>令牌校验（<code>lan info</code>）</li>
+      <li>四步进度：上传 → 识别 → 润色 → 输入电脑，当前步与失败步（需要任务状态给出阶段）</li>
+      <li>结果：润色后 / 原文切换、润色状态；润色失败时的原文</li>
+      <li>最近 5 条：文本、来源、润色状态、时间</li>
+    </ul>
+    <h4>动作 → 接口</h4>
+    <ul>
+      <li>按住录音、松开上传 → <code>phone submit</code>；进度 → <code>job status</code>（轮询或事件流）</li>
+      <li>点历史右侧箭头或整条、"发送原文" → <code>resend(text)</code></li>
+      <li>刷新 → <code>history list(limit=5)</code></li>
+      <li>非 https → 系统录音上传，同 <code>phone submit</code></li>
+      <li>复制 → 手机剪贴板；改快捷键 → 浏览器本地存储</li>
+    </ul>
+    <h4>保留的现有规则</h4>
+    <ul><li>录音短于 0.4 秒提示"录音太短"；麦克风无权限显示原因；20 秒未收到电脑确认提示检查电脑端服务</li></ul>
+  </aside>
+</section>
+
+<script>
+const STATES = {
+  settings: [["overview", "概览"], ["models", "模型"], ["pulling", "模型下载中"], ["voice", "语音输入"], ["shot", "截图翻译"], ["keys", "快捷键（录入中）"], ["history", "历史"], ["lan", "手机录入"], ["api", "开放接口"], ["system", "系统与关于"], ["offline", "服务不可达"]],
+  status: [["idle", "空闲"], ["recording", "录音中（实时字幕）"], ["polishing", "润色中"], ["typed", "已输入（改动高亮）"], ["polishfail", "润色失败"], ["errors", "其他错误/排队"]],
+  overlay: [["loading", "识别翻译中"], ["result", "逐行译文"], ["ocronly", "仅识别文字"], ["error", "失败"]],
+  phone: [["ready", "就绪"], ["rec", "录音中"], ["busy", "识别/润色中"], ["done", "已输入"], ["polishfail", "润色失败"], ["token", "令牌无效"], ["fallback", "非 https 上传"]],
+};
+const PAGE_OF = { pulling: "models", offline: "overview" };
+const FRAMES = [
+  ["", "今天下"], ["今天", "下午三"], ["今天下午", "三点我们"], ["今天下午三点我们", "在会议适"],
+  ["今天下午三点我们在会议", "室讨论一"], ["今天下午三点我们在会议室讨论", "一下新版"],
+  ["今天下午三点我们在会议室讨论一下新版本", "的发布计"], ["今天下午三点我们在会议室讨论一下新版本的发布", "计化，嗯"],
+  ["今天下午三点我们在会议室讨论一下新版本的发布计化，嗯，", "还有千问"],
+  ["今天下午三点我们在会议室讨论一下新版本的发布计化，嗯，还有千问", "的接入方"],
+];
+const RAW = "今天下午三点我们在会议室讨论一下新版本的发布计化，嗯，还有千问的接入方案";
+const POLISHED_MARKED = "今天下午三点<ins>，</ins>我们在会议室讨论一下新版本的发布<ins>计划</ins>，还有 <ins>Qwen</ins> 的接入方案<ins>。</ins>";
+const POLISHED = "今天下午三点，我们在会议室讨论一下新版本的发布计划，还有 Qwen 的接入方案。";
+let timer = null;
+const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+const ICON = (id) => `<svg class="ic"><use href="#${id}"/></svg>`;
+const capsule = (cls, icon, label, extra = "") => `<div class="capsule ${cls}">${ICON(icon)}<span class="lbl">${label}</span>${extra}</div>`;
+const caption = (cls, head, text) => `<div class="caption ${cls}"><div class="caption-head">${head}</div><div class="caption-text"><div>${text}</div></div></div>`;
+
+function renderStatus(state) {
+  const box = document.getElementById("b-hud");
+  const input = document.getElementById("b-input");
+  input.innerHTML = '<span class="caret"></span>';
+  if (state === "idle") box.innerHTML = capsule("", "i-mic", "就绪");
+  if (state === "recording") {
+    let i = 0;
+    const draw = () => {
+      const [stable, tail] = FRAMES[i % FRAMES.length];
+      const sec = 1 + Math.floor((i % FRAMES.length) * 0.7);
+      box.innerHTML = capsule("rec", "i-mic", "录音中", `<span class="meter"><i></i><i></i><i></i><i></i><i></i></span><span class="time">0:0${sec}</span>`) +
+        caption("", `<span class="lbl-rec">● 正在听</span><span class="right">松开 <kbd>Ctrl+Alt+Z</kbd> 结束</span>`, `${esc(stable)}<span class="tail">${esc(tail)}</span><span class="caret" style="color:var(--hud-unstable)"></span>`);
+      i++;
+    };
+    draw();
+    timer = setInterval(draw, 700);
+  }
+  if (state === "polishing") box.innerHTML = capsule("busy", "i-spark", "润色中") + caption("busy", `<span class="lbl-busy">润色中</span><span class="right">qwen3.5:4b</span>`, esc(RAW));
+  if (state === "typed") {
+    box.innerHTML = capsule("done", "i-check", "已输入") + caption("", `<span class="lbl-ok">✓ 已输入</span><span class="right">改了 4 处</span>`, POLISHED_MARKED);
+    input.innerHTML = `<span class="typed">${esc(POLISHED)}</span><span class="caret"></span>`;
+  }
+  if (state === "polishfail") box.innerHTML = capsule("err", "i-alert", "润色失败") +
+    caption("err", `${ICON("i-alert")}润色失败，未输入：本地模型无响应（Ollama 未运行）<span class="right">按 <kbd>Ctrl+Alt+R</kbd> 发送原文</span>`, esc(RAW));
+  if (state === "errors") box.innerHTML = `<div class="capsule-list">${[
+    capsule("busy", "i-clock", "已排队 · 前方 1 条"),
+    capsule("err", "i-alert", "焦点已切换，未输入 · Ctrl+Alt+R 重输"),
+    capsule("err", "i-alert", "没有识别到内容"),
+    capsule("err", "i-alert", "麦克风打开失败：设备被占用"),
+    capsule("err", "i-alert", "语音模型未就绪 · 打开设置"),
+  ].join("")}</div>`;
+}
+const STEP_NAMES = ["上传", "识别", "润色", "输入电脑"];
+const PHONE = {
+  ready: [null, "", "就绪"], rec: [null, "", "录音中 0:03 · 松开结束"], busy: [[1, "now"], "", "识别中…"],
+  done: [[4, "done"], "ok", "已输入到电脑"], polishfail: [[2, "fail"], "err", "润色失败：本地模型无响应。原文未输入"],
+  token: [null, "err", ""], fallback: [null, "", "请用上面按钮录音"],
+};
+function renderPhone(state) {
+  const [step, cls, text] = PHONE[state];
+  const mic = document.getElementById("b-mic");
+  mic.classList.toggle("rec", state === "rec");
+  mic.disabled = state === "busy";
+  document.getElementById("b-mic-text").textContent = state === "rec" ? "松开结束" : (state === "busy" ? "处理中" : "按住说话");
+  const steps = document.getElementById("b-steps");
+  steps.hidden = !step;
+  if (step) {
+    const [idx, kind] = step;
+    steps.innerHTML = STEP_NAMES.map((n, i) => {
+      let c = i < idx ? "done" : "";
+      if (i === idx && kind !== "done") c = kind;
+      return `<span class="step ${c}"><i></i>${n}</span>`;
+    }).join("");
+  }
+  const st = document.getElementById("b-status");
+  st.className = "ph-status " + cls;
+  st.textContent = text;
+}
+function applyShow(root, state) {
+  root.querySelectorAll("[data-show]").forEach((el) => { el.hidden = !el.dataset.show.split(" ").includes(state); });
+}
+function route() {
+  clearInterval(timer);
+  const [surface = "settings", stateArg] = location.hash.slice(1).split("/");
+  const list = STATES[surface] || STATES.settings;
+  const state = list.some(([k]) => k === stateArg) ? stateArg : list[0][0];
+  document.querySelectorAll(".surface").forEach((s) => s.classList.toggle("on", s.id === "s-" + surface));
+  document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.surface === surface));
+  document.getElementById("states").innerHTML = list.map(([k, t]) => `<button class="${k === state ? "on" : ""}" data-state="${k}">${t}</button>`).join("");
+  if (surface === "settings") {
+    applyShow(document.getElementById("settings-stage"), state);
+    const page = PAGE_OF[state] || state;
+    document.querySelectorAll("#side .nav").forEach((n) => n.classList.toggle("on", n.dataset.page === page));
+  }
+  if (surface === "status") renderStatus(state);
+  if (surface === "overlay") applyShow(document.getElementById("overlay-stage"), state);
+  if (surface === "phone") { applyShow(document.getElementById("phone-stage"), state); renderPhone(state); }
+}
+document.getElementById("tabs").addEventListener("click", (e) => { const s = e.target.closest("button")?.dataset.surface; if (s) location.hash = s; });
+document.getElementById("states").addEventListener("click", (e) => {
+  const st = e.target.dataset.state; if (st) location.hash = location.hash.slice(1).split("/")[0] + "/" + st;
+});
+document.getElementById("side").addEventListener("click", (e) => { const p = e.target.closest(".nav")?.dataset.page; if (p) location.hash = "settings/" + p; });
+document.getElementById("themeBtn").addEventListener("click", () => {
+  const r = document.documentElement; r.dataset.theme = r.dataset.theme === "dark" ? "light" : "dark";
+});
+document.querySelectorAll("svg[data-qr]").forEach((svg) => {
+  let seed = Number(svg.dataset.qr), cells = "";
+  const rnd = () => (seed = (seed * 9301 + 49297) % 233280) / 233280;
+  const finder = (x, y) => `<rect x="${x}" y="${y}" width="7" height="7" fill="currentColor"/><rect x="${x + 1}" y="${y + 1}" width="5" height="5" fill="#fff"/><rect x="${x + 2}" y="${y + 2}" width="3" height="3" fill="currentColor"/>`;
+  for (let y = 0; y < 25; y++) for (let x = 0; x < 25; x++) {
+    if (!((x < 8 && y < 8) || (x > 16 && y < 8) || (x < 8 && y > 16)) && rnd() > 0.52) cells += `<rect x="${x}" y="${y}" width="1" height="1" fill="currentColor"/>`;
+  }
+  svg.innerHTML = cells + finder(0, 0) + finder(18, 0) + finder(0, 18);
+});
+window.addEventListener("hashchange", route);
+route();
+</script>
+</body>
+</html>

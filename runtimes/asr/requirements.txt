@@ -1,0 +1,23 @@
+# 生产 sidecar 依赖说明。不要写入项目根 requirements.txt，也不要在本文件被应用 .venv 安装。
+# 已在隔离环境验证（可行性 T3/T4）：
+#   CPython 3.12.13
+#   qwen-asr 0.0.6
+#   vLLM 0.14.0
+#   torch 2.9.1+cu128 (sm_120)
+# 现成隔离解释器：
+#   /home/spp/桌面/ollama-voice-input/.cache/v3-feasibility/venv-asr/bin/python
+# 官方模型（已下载，约 4.4G）：
+#   /home/spp/桌面/ollama-voice-input/.cache/v3-feasibility/models/Qwen3-ASR-1.7B
+# 启动（必须显式 --load 才会占 GPU；只绑回环）：
+#   .cache/v3-feasibility/venv-asr/bin/python -m runtimes.asr serve \
+#     --host 127.0.0.1 --port 17946 --load --warmup \
+#     --gpu-memory-utilization 0.8 --max-model-len 16384 --chunk-size-sec 0.5
+# 可启动不等于长音频达标。ASR_STREAMING_BLOCKERS 仍有效。
+# 应用核心禁止 import torch / vLLM。
+qwen-asr==0.0.6
+vllm==0.14.0
+# torch 2.9.1+cu128 按官方 sm_120 轮子安装，不在此锁定 CUDA 索引。
+fastapi>=0.116
+uvicorn>=0.35
+httpx>=0.28
+numpy>=2.0

@@ -19,3 +19,6 @@ __pycache__/
 certs/
 .web_input_token
 /wiki/
+.pp/tmp/
+.pp/gate/
+.pp/backup/

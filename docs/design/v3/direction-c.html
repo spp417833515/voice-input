@@ -1,0 +1,637 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>方向 C · 暖色延续 + 按段原位 — 语音输入 v3 设计模板</title>
+<style>
+/* ===== 设计令牌（方向 C）：延续现有 setup.html / voice.html 的暖纸色 + 青绿 ===== */
+:root {
+  --font-sans: "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  --fs-xs: 12px; --fs-sm: 13px; --fs-md: 14px; --fs-lg: 16px; --fs-xl: 26px;
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
+  --radius-sm: 10px; --radius-md: 14px; --radius-lg: 20px; --radius-pill: 999px;
+  --c-bg: #f4efe7; --c-surface: #fffaf3; --c-surface-2: #f7f1e8; --c-text: #172126; --c-muted: #5f6b73; --c-border: #d7cbbd; --c-line: #ebe3d7;
+  --c-accent: #0f766e; --c-accent-hover: #115e59; --c-on-accent: #ffffff; --c-accent-soft: #dff2ef;
+  --c-ok: #15803d; --c-ok-soft: #dcfce7; --c-warn: #b45309; --c-warn-soft: #fef3c7; --c-danger: #dc2626; --c-danger-soft: #fee2e2;
+  --shadow-panel: 0 12px 40px rgba(23, 33, 38, 0.06);
+  /* 悬浮层：浅色纸卡（与设置页同一语言），靠阴影与描边在任何应用上分离 */
+  --hud-bg: rgba(255, 250, 243, 0.97); --hud-solid: #fffaf3; --hud-text: #172126; --hud-muted: #6b7680; --hud-border: #d7cbbd;
+  --hud-unstable: #0f766e; --hud-unstable-bg: #dff2ef; --hud-rec: #dc2626; --hud-busy: #b45309; --hud-ok: #15803d; --hud-danger: #dc2626;
+  --shadow-hud: 0 10px 30px rgba(23, 33, 38, 0.28);
+  --dur-fast: 120ms;
+}
+
+/* ===== 演示外壳（不属于设计） ===== */
+:root { --demo-bg: #e9ebee; --demo-ink: #24292f; --demo-line: #c9ced4; }
+* { box-sizing: border-box; }
+body { margin: 0; font-family: var(--font-sans); color: var(--demo-ink); background: var(--demo-bg); }
+.demo-head { position: sticky; top: 0; z-index: 50; background: var(--demo-bg); border-bottom: 1px solid var(--demo-line); padding: 12px 20px; }
+.demo-head h1 { margin: 0 0 4px; font-size: 18px; }
+.demo-head p { margin: 0 0 10px; font-size: 13px; color: #57606a; max-width: 1150px; }
+.demo-tabs, .demo-states { display: flex; flex-wrap: wrap; gap: 6px; }
+.demo-states { margin-top: 8px; }
+.demo-head button { font: inherit; font-size: 13px; padding: 5px 12px; border: 1px solid var(--demo-line); border-radius: 999px; background: #fff; cursor: pointer; }
+.demo-head button.on { background: #24292f; color: #fff; border-color: #24292f; }
+.surface { display: none; padding: 20px; gap: 20px; grid-template-columns: minmax(0, 1fr) 340px; align-items: start; max-width: 1450px; }
+.surface.on { display: grid; }
+@media (max-width: 1150px) { .surface.on { grid-template-columns: 1fr; } }
+.notes { background: #fff; border: 1px solid var(--demo-line); border-radius: 10px; padding: 14px 16px; font-size: 13px; line-height: 1.6; }
+.notes h3 { margin: 0 0 6px; font-size: 14px; }
+.notes h4 { margin: 12px 0 4px; font-size: 13px; color: #57606a; }
+.notes ul { margin: 0; padding-left: 18px; }
+.notes code { font-family: var(--font-mono); font-size: 12px; background: #f3f4f6; padding: 0 4px; border-radius: 4px; }
+[hidden] { display: none !important; }
+
+/* ===== 公共原子 ===== */
+.ic { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.btn { display: inline-flex; align-items: center; gap: var(--sp-1); font: inherit; font-size: var(--fs-sm); padding: 7px 16px; border-radius: var(--radius-sm); border: 1px solid var(--c-border); background: #fff; color: var(--c-text); cursor: pointer; white-space: nowrap; transition: border-color var(--dur-fast); }
+.btn:hover { border-color: var(--c-accent); color: var(--c-accent); }
+.btn.primary { background: var(--c-accent); border-color: var(--c-accent); color: var(--c-on-accent); }
+.btn.primary:hover { background: var(--c-accent-hover); color: var(--c-on-accent); }
+.btn.sm { padding: 4px 12px; font-size: var(--fs-xs); }
+.btn:disabled { opacity: .55; cursor: default; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); padding: 3px 10px; border-radius: var(--radius-pill); background: var(--c-surface-2); color: var(--c-muted); border: 1px solid var(--c-line); white-space: nowrap; }
+.pill.ok { background: var(--c-ok-soft); color: var(--c-ok); border-color: transparent; }
+.pill.warn { background: var(--c-warn-soft); color: var(--c-warn); border-color: transparent; }
+.pill.danger { background: var(--c-danger-soft); color: var(--c-danger); border-color: transparent; }
+.pill.accent { background: var(--c-accent-soft); color: var(--c-accent); border-color: transparent; }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; background: currentColor; }
+.mono { font-family: var(--font-mono); }
+.muted { color: var(--c-muted); }
+.progress { height: 8px; border-radius: var(--radius-pill); background: var(--c-line); overflow: hidden; }
+.progress > i { display: block; height: 100%; background: linear-gradient(90deg, #14b8a6, var(--c-accent)); }
+.switch { position: relative; width: 44px; height: 24px; border-radius: var(--radius-pill); background: var(--c-border); border: 0; cursor: pointer; flex: none; }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: left var(--dur-fast); }
+.switch[aria-checked="true"] { background: var(--c-accent); }
+.switch[aria-checked="true"]::after { left: 23px; }
+.field { width: 100%; font: inherit; font-size: var(--fs-sm); padding: 10px 14px; border: 1px solid var(--c-border); border-radius: var(--radius-sm); background: #fff; color: var(--c-text); }
+textarea.field { resize: vertical; line-height: 1.6; }
+
+/* ===== 1 设置/管理页：左侧菜单 + 右侧内容（亮色，用户指定） ===== */
+.win { max-width: 1000px; border-radius: var(--radius-lg); overflow: hidden; border: 1px solid var(--c-border); box-shadow: var(--shadow-panel); background: radial-gradient(circle at top left, #fff2cf 0, transparent 28%), radial-gradient(circle at bottom right, #d7f4ef 0, transparent 32%), var(--c-bg); color: var(--c-text); font-size: var(--fs-md); }
+.sc-layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); height: 800px; }
+.side { display: flex; flex-direction: column; gap: 4px; padding: var(--sp-5) var(--sp-3); background: rgba(255, 255, 255, 0.55); border-right: 1px solid var(--c-line); }
+.side-brand { font-size: var(--fs-lg); font-weight: 700; padding: 0 var(--sp-3) var(--sp-4); }
+.side button { font: inherit; font-size: var(--fs-sm); text-align: left; padding: 10px var(--sp-3); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--c-muted); cursor: pointer; }
+.side button:hover { color: var(--c-text); }
+.side button.on { background: var(--c-surface); color: var(--c-accent); font-weight: 600; box-shadow: 0 1px 4px rgba(23, 33, 38, 0.08); }
+.side-foot { margin-top: auto; padding: var(--sp-3); font-size: var(--fs-xs); color: var(--c-muted); line-height: 1.6; }
+.sc { padding: var(--sp-6) var(--sp-5) var(--sp-5); overflow: auto; }
+.sc-head { display: flex; align-items: flex-start; gap: var(--sp-4); }
+.sc-head h1 { margin: 0; font-size: var(--fs-xl); }
+.sc-head p { margin: var(--sp-1) 0 0; color: var(--c-muted); font-size: var(--fs-sm); }
+.sc-head .btn { margin-left: auto; }
+.health { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: var(--sp-3) 0 var(--sp-4); }
+.panel { background: var(--c-surface); border: 1px solid var(--c-border); border-radius: var(--radius-lg); padding: var(--sp-4) var(--sp-5); margin-bottom: var(--sp-3); box-shadow: var(--shadow-panel); }
+.panel h2 { margin: 0 0 var(--sp-2); font-size: var(--fs-lg); display: flex; align-items: center; gap: var(--sp-2); }
+.panel h2 .pill { margin-left: auto; font-weight: 400; }
+.row { display: flex; align-items: center; gap: var(--sp-3); padding: 10px 0; border-top: 1px solid var(--c-line); }
+.row:first-of-type { border-top: 0; }
+.row-main { flex: 1; min-width: 0; }
+.row-title { font-weight: 600; }
+.row-sub { font-size: var(--fs-xs); color: var(--c-muted); margin-top: 2px; line-height: 1.6; }
+.row-sub.err { color: var(--c-danger); }
+.log { margin-top: var(--sp-2); font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1.6; background: #172126; color: #d8e1e6; border-radius: var(--radius-sm); padding: var(--sp-2) var(--sp-3); max-height: 96px; overflow: auto; white-space: pre-wrap; }
+.langs { display: grid; grid-template-columns: repeat(5, 1fr); gap: var(--sp-2); }
+.lang { padding: var(--sp-3); border-radius: var(--radius-md); border: 1px solid var(--c-border); background: #fff; text-align: center; cursor: pointer; font-size: var(--fs-sm); }
+.lang.on { border-color: var(--c-accent); background: var(--c-accent-soft); color: var(--c-accent); font-weight: 600; }
+.lang small { display: block; font-weight: 400; color: var(--c-muted); font-size: var(--fs-xs); margin-top: 2px; }
+.key { width: 180px; text-align: center; font-family: var(--font-mono); }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
+.qr { width: 140px; height: 140px; border-radius: var(--radius-sm); background: #fff; border: 1px solid var(--c-border); padding: 8px; color: #111; }
+.steps { margin: var(--sp-2) 0 0; padding-left: 18px; font-size: var(--fs-sm); line-height: 1.8; }
+.warn-box { margin-top: var(--sp-2); padding: var(--sp-2) var(--sp-3); border-radius: var(--radius-sm); background: var(--c-warn-soft); color: #78350f; font-size: var(--fs-xs); line-height: 1.6; }
+.ep { display: flex; gap: var(--sp-2); padding: 6px 0; border-top: 1px solid var(--c-line); font-size: var(--fs-sm); }
+.ep:first-of-type { border-top: 0; }
+.ep .mono { min-width: 108px; color: var(--c-accent); font-size: var(--fs-xs); padding-top: 2px; }
+.rec { padding: var(--sp-3) 0; border-top: 1px solid var(--c-line); }
+.rec:first-of-type { border-top: 0; padding-top: 0; }
+.rec-head { display: flex; gap: var(--sp-2); align-items: center; font-size: var(--fs-xs); color: var(--c-muted); }
+.rec-head .btn { margin-left: auto; }
+.rec-label { font-size: var(--fs-xs); color: var(--c-muted); margin-top: var(--sp-2); }
+.rec-text { line-height: 1.7; }
+.rec-text.raw { color: var(--c-muted); font-size: var(--fs-sm); }
+.check { display: flex; align-items: center; gap: var(--sp-2); padding: 8px 0; border-top: 1px solid var(--c-line); font-size: var(--fs-sm); }
+.check:first-of-type { border-top: 0; }
+.check .dot { color: var(--c-ok); } .check.bad .dot { color: var(--c-danger); }
+.check span:last-child { margin-left: auto; color: var(--c-muted); }
+.banner { padding: var(--sp-3) var(--sp-4); border-radius: var(--radius-md); background: var(--c-danger-soft); color: var(--c-danger); font-size: var(--fs-sm); margin-bottom: var(--sp-3); line-height: 1.6; }
+
+/* ===== 2 状态栏 + 字幕卡（左下：胶囊在下，字幕卡叠在上方向上长） ===== */
+.desk { position: relative; height: 580px; border-radius: var(--radius-md); overflow: hidden; background: linear-gradient(135deg, #24303a, #3b4c58 55%, #5d7380); }
+.app { position: absolute; left: 60px; top: 36px; right: 60px; height: 280px; background: #fff; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.3); overflow: hidden; color: #24292f; }
+.app-bar { height: 32px; background: #eef0f3; display: flex; align-items: center; padding: 0 12px; font-size: 12px; color: #57606a; }
+.app-body { padding: 18px 22px; font-size: 15px; line-height: 1.8; }
+.app-body .typed { background: #fff3c4; }
+.caret { display: inline-block; width: 2px; height: 1.1em; background: currentColor; vertical-align: text-bottom; animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.hud-dock { position: absolute; left: 20px; bottom: 50px; display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-2); }
+.cap { width: 420px; padding: var(--sp-3) var(--sp-4); border-radius: var(--radius-md); background: var(--hud-bg); border: 1px solid var(--hud-border); color: var(--hud-text); box-shadow: var(--shadow-hud); }
+.cap-head { display: flex; gap: var(--sp-2); align-items: center; font-size: var(--fs-xs); color: var(--hud-muted); margin-bottom: 4px; }
+.cap-head .r { margin-left: auto; }
+.cap-head kbd { font-family: var(--font-mono); padding: 0 6px; border: 1px solid var(--hud-border); border-radius: 4px; background: #fff; color: var(--hud-text); }
+.cap-text { font-size: var(--fs-lg); line-height: 1.6; max-height: calc(1.6em * 3); overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
+.cap-text .tail { color: var(--hud-unstable); background: var(--hud-unstable-bg); border-radius: 3px; }
+.cap-text .dim { color: var(--hud-muted); }
+.cap.err { border-color: var(--hud-danger); }
+.cap.err .cap-head { color: var(--hud-danger); }
+.chipbar { display: inline-flex; align-items: center; gap: var(--sp-2); height: 34px; padding: 0 var(--sp-4); border-radius: var(--radius-pill); background: var(--hud-bg); border: 1px solid var(--hud-border); color: var(--hud-text); box-shadow: var(--shadow-hud); font-size: var(--fs-sm); cursor: grab; }
+.chipbar .dot { color: var(--hud-ok); }
+.chipbar.rec .dot { color: var(--hud-rec); animation: pulse 1s ease-in-out infinite; }
+.chipbar.rec b, .chipbar.err b { color: var(--hud-rec); }
+.chipbar.busy .dot, .chipbar.busy b { color: var(--hud-busy); }
+.chipbar.done b { color: var(--hud-ok); }
+.chipbar.err .dot { color: var(--hud-danger); }
+.chipbar .t { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--hud-muted); }
+@keyframes pulse { 50% { opacity: .35; } }
+
+/* ===== 3 截图翻译：按段原位 ===== */
+.page { position: absolute; left: 60px; top: 36px; right: 60px; bottom: 36px; background: #fff; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.3); overflow: hidden; }
+.page-body { padding: 30px 44px; font-family: Georgia, "Times New Roman", serif; color: #24292f; }
+.page-body .ln { font-size: 17px; line-height: 30px; height: 30px; white-space: nowrap; }
+.page-body .ln.h { font-size: 24px; font-weight: 700; line-height: 40px; height: 40px; }
+.blk { position: relative; margin-bottom: 12px; width: max-content; }
+.page-body .other { color: #57606a; font-size: 15px; line-height: 26px; margin-top: 24px; }
+.sel { position: relative; display: inline-block; }
+.sel.dim::after { content: ""; position: absolute; inset: -8px; border-radius: 8px; background: rgba(23,33,38,.12); outline: 2px solid var(--c-accent); }
+.tb { position: absolute; left: -6px; right: -6px; top: -4px; min-height: calc(100% + 8px); z-index: 2; padding: 6px 10px; border-radius: 8px; background: var(--hud-solid); border: 1px solid var(--hud-border); border-left: 3px solid var(--c-accent); box-shadow: 0 4px 14px rgba(23,33,38,.14); color: var(--hud-text); font-family: var(--font-sans); font-size: 16px; line-height: 1.7; white-space: normal; }
+.tb.h { font-size: 22px; font-weight: 700; line-height: 1.4; }
+.ob { position: absolute; inset: -4px -6px; border: 1px dashed var(--c-accent); border-radius: 8px; background: rgba(15,118,110,.06); }
+.corner { position: absolute; right: -8px; top: -50px; display: flex; align-items: center; gap: var(--sp-2); padding: 5px 6px 5px 12px; border-radius: var(--radius-pill); background: var(--hud-bg); border: 1px solid var(--hud-border); box-shadow: var(--shadow-hud); font-family: var(--font-sans); font-size: var(--fs-sm); color: var(--hud-text); white-space: nowrap; }
+.corner .muted { font-size: var(--fs-xs); }
+.corner.err { color: var(--hud-danger); border-color: var(--hud-danger); }
+.cbtn { display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: var(--fs-xs); padding: 4px 10px; border-radius: var(--radius-pill); border: 1px solid var(--hud-border); background: #fff; color: var(--hud-text); cursor: pointer; }
+.cbtn.primary { background: var(--c-accent); border-color: var(--c-accent); color: var(--c-on-accent); }
+.loader { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--c-line); border-top-color: var(--c-accent); animation: rot .8s linear infinite; }
+@keyframes rot { to { transform: rotate(360deg); } }
+
+/* ===== 4 手机录音页 ===== */
+.phone { width: 380px; height: 790px; border: 10px solid #172126; border-radius: 40px; overflow: hidden; margin: 0 auto; display: flex; flex-direction: column; background: radial-gradient(circle at top left, #fff2cf 0, transparent 35%), var(--c-bg); color: var(--c-text); font-size: var(--fs-md); }
+.ph { flex: 1; overflow: auto; padding: var(--sp-5) var(--sp-4); }
+.ph h1 { margin: 0; font-size: 24px; }
+.ph .sub { margin: 4px 0 0; color: var(--c-muted); font-size: var(--fs-sm); }
+.ph-tabs { display: flex; margin-top: var(--sp-4); padding: 4px; border-radius: var(--radius-md); background: rgba(255,255,255,.6); border: 1px solid var(--c-line); }
+.ph-tabs button { flex: 1; font: inherit; font-size: var(--fs-sm); padding: 8px 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--c-muted); }
+.ph-tabs button.on { background: var(--c-surface); color: var(--c-accent); font-weight: 600; box-shadow: 0 1px 4px rgba(23,33,38,.08); }
+.ph-card { margin-top: var(--sp-4); padding: var(--sp-6) var(--sp-4) var(--sp-5); border-radius: 22px; background: var(--c-surface); border: 1px solid var(--c-border); box-shadow: var(--shadow-panel); text-align: center; }
+.mic { width: 168px; height: 168px; border-radius: 50%; border: 0; background: linear-gradient(145deg, #14b8a6, var(--c-accent)); color: #fff; display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; font: inherit; font-size: 18px; box-shadow: 0 14px 30px rgba(15,118,110,.3); cursor: pointer; }
+.mic .ic { width: 44px; height: 44px; }
+.mic.rec { background: linear-gradient(145deg, #f87171, var(--c-danger)); box-shadow: 0 0 0 14px var(--c-danger-soft), 0 14px 30px rgba(220,38,38,.3); }
+.mic:disabled { background: var(--c-line); color: var(--c-muted); box-shadow: none; }
+.ph-status { margin-top: var(--sp-4); font-size: var(--fs-sm); color: var(--c-muted); min-height: 20px; line-height: 1.6; }
+.ph-status.ok { color: var(--c-ok); } .ph-status.err { color: var(--c-danger); }
+.ph-result { margin-top: var(--sp-3); text-align: left; padding: var(--sp-3) var(--sp-4); border-radius: var(--radius-md); background: #fff; border: 1px solid var(--c-line); line-height: 1.7; }
+.ph-result .meta { display: flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-2); font-size: var(--fs-xs); color: var(--c-muted); }
+.ph-result .meta .btn { margin-left: auto; }
+.ph-key { margin-top: var(--sp-3); font-size: var(--fs-xs); color: var(--c-muted); }
+.ph-key kbd { font-family: var(--font-mono); padding: 1px 8px; border: 1px solid var(--c-border); border-radius: 6px; background: #fff; }
+.link { font: inherit; font-size: var(--fs-xs); color: var(--c-accent); background: none; border: 0; cursor: pointer; }
+.ph-banner { margin-top: var(--sp-4); padding: var(--sp-3) var(--sp-4); border-radius: var(--radius-md); background: var(--c-danger-soft); color: var(--c-danger); font-size: var(--fs-sm); line-height: 1.6; }
+.upload { display: inline-flex; align-items: center; gap: var(--sp-2); padding: var(--sp-3) var(--sp-5); border-radius: var(--radius-md); background: var(--c-accent); color: #fff; font-size: var(--fs-lg); }
+.hlist { margin-top: var(--sp-4); }
+.hhead { display: flex; align-items: center; margin-bottom: var(--sp-2); font-size: var(--fs-sm); color: var(--c-muted); }
+.hhead .link { margin-left: auto; }
+.hitem { display: block; width: 100%; text-align: left; font: inherit; font-size: var(--fs-sm); line-height: 1.6; padding: var(--sp-3) var(--sp-4); margin-bottom: var(--sp-2); border-radius: var(--radius-md); border: 1px solid var(--c-border); background: var(--c-surface); color: var(--c-text); cursor: pointer; }
+.hmeta { display: flex; gap: var(--sp-2); align-items: center; margin-top: 4px; font-size: var(--fs-xs); color: var(--c-muted); }
+.hmeta .again { margin-left: auto; color: var(--c-accent); }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2 21h20L12 3zM12 10v5M12 18h.01"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M6 10l6-6 6 6M4 20h16"/></symbol>
+</svg>
+
+<header class="demo-head">
+  <h1>方向 C · 暖色延续 + 按段原位（折中方案）</h1>
+  <p>沿用现在设置页的暖纸色和青绿主色，用户最熟悉；设置窗口按用户要求改为左侧菜单、右侧内容（亮色）。状态栏仍在左下角，录音时在胶囊上方叠出一张浅色字幕卡（最多三行，向上长）；截图翻译按"段落"原位覆盖：标题、每一段各盖一张译文卡，比整块更贴原位置，比逐行更不容易错位。所有数据均为示例。</p>
+  <nav class="demo-tabs" id="tabs">
+    <button data-surface="settings">1 设置/管理页</button>
+    <button data-surface="status">2 状态栏 + 实时字幕</button>
+    <button data-surface="overlay">3 截图翻译浮窗</button>
+    <button data-surface="phone">4 手机录音页</button>
+  </nav>
+  <nav class="demo-states" id="states"></nav>
+</header>
+
+<!-- ================= 1 设置/管理页 ================= -->
+<section class="surface" id="s-settings">
+  <div class="win">
+    <div class="sc-layout" id="settings-stage">
+    <nav class="side" id="ctabs">
+      <div class="side-brand">语音输入设置</div>
+      <button data-tab="voice">语音</button>
+      <button data-tab="shot">截图翻译</button>
+      <button data-tab="keys">快捷键</button>
+      <button data-tab="conn">手机与接口</button>
+      <button data-tab="history">历史</button>
+      <button data-tab="system">系统</button>
+      <div class="side-foot">Ollama Voice Input v3.0.0<br>语音输入 + 截图翻译，完全本地运行</div>
+    </nav>
+    <div class="sc">
+      <header class="sc-head">
+        <div><h1 id="c-title">语音</h1><p>本地识别、纠错润色与截图翻译，全部在这台电脑上运行。</p></div>
+        <button class="btn"><svg class="ic"><use href="#i-refresh"/></svg>重新检测</button>
+      </header>
+      <div class="health">
+        <span class="pill ok" data-show="voice shot keys conn history system"><span class="dot"></span>语音识别就绪</span>
+        <span class="pill ok" data-show="voice shot keys conn history system"><span class="dot"></span>润色 / 翻译就绪</span>
+        <span class="pill ok" data-show="voice shot keys conn history system"><span class="dot"></span>手机入口 2 个</span>
+        <span class="pill ok" data-show="missing"><span class="dot"></span>语音识别就绪</span>
+        <span class="pill warn" data-show="missing"><span class="dot"></span>润色 / 翻译：未安装 Ollama</span>
+        <span class="pill danger" data-show="offline"><span class="dot"></span>无法连接本地服务</span>
+      </div>
+      <div class="banner" data-show="offline" style="margin-top:var(--sp-4)">connect ECONNREFUSED 127.0.0.1:8765（后端原文）。后台服务未运行时本页所有内容不可用，启动后点"重新检测"。</div>
+
+      <!-- 语音 -->
+      <div data-show="voice missing">
+        <div class="panel">
+          <h2>识别模型 <span class="mono muted" style="font-size:var(--fs-sm);font-weight:400">Qwen3-ASR-1.7B</span><span class="pill ok">已就绪</span></h2>
+          <div class="row"><div class="row-main row-sub">3.5 GB · GPU 加速 · 说话时实时出字，松开后定稿</div></div>
+          <p class="row-sub">未下载时这里是「下载」按钮 + 进度条；失败时显示后端原因与「重试」。</p>
+        </div>
+        <div class="panel">
+          <h2>纠错润色 <span class="mono muted" style="font-size:var(--fs-sm);font-weight:400">qwen3.5:4b</span>
+            <span class="pill ok" data-show="voice">已就绪</span><span class="pill warn" data-show="missing">需安装</span></h2>
+          <div class="row">
+            <div class="row-main"><div class="row-title">松开后纠错润色</div><div class="row-sub">只改错别字、同音词、专有名词、标点和口头禅，不改原意。失败时不输入，按重复键发送原文。</div></div>
+            <button class="switch" role="switch" aria-checked="true" onclick="this.setAttribute('aria-checked', this.getAttribute('aria-checked') !== 'true')"></button>
+          </div>
+          <div class="row" data-show="voice"><div class="row-main row-sub">Ollama 0.12.6 运行中 · 模型 3.4 GB 已下载 · 截图翻译共用此模型</div></div>
+          <div data-show="missing">
+            <div class="row"><div class="row-main"><div class="row-title">1. 安装 Ollama</div><div class="row-sub">本机未找到 ollama 命令</div></div><button class="btn primary" disabled>安装中…</button></div>
+            <div class="log">&gt;&gt;&gt; Downloading ollama...
+######################################## 63.0%</div>
+            <div class="row" style="margin-top:var(--sp-2)"><div class="row-main"><div class="row-title muted">2. 下载 qwen3.5:4b（约 3.4 GB）</div><div class="row-sub">安装完成后可用</div></div><button class="btn" disabled>下载</button></div>
+            <div class="progress" style="margin-top:4px"><i style="width:0%"></i></div>
+          </div>
+        </div>
+        <div class="panel">
+          <h2>关键词</h2>
+          <p class="row-sub" style="margin:0 0 var(--sp-2)">润色时按这里的写法修正专有名词。逗号、顿号、空格或换行分隔。</p>
+          <textarea class="field" rows="3">Qwen、Ollama、FastAPI、Wayland、GNOME</textarea>
+          <div style="display:flex;justify-content:flex-end;margin-top:var(--sp-2)"><button class="btn primary">保存</button></div>
+        </div>
+      </div>
+
+      <!-- 截图翻译 -->
+      <div data-show="shot">
+        <div class="panel">
+          <h2>翻译成</h2>
+          <div class="langs">
+            <div class="lang on">中文<small>默认</small></div><div class="lang">英文<small>English</small></div><div class="lang">日文<small>日本語</small></div><div class="lang">韩文<small>한국어</small></div><div class="lang">仅识别<small>不翻译</small></div>
+          </div>
+          <p class="row-sub" style="margin-top:var(--sp-3)">本地 qwen3.5:4b 翻译，不联网；与语音润色共用同一模型（状态见"语音"页）。结果按段落盖在原文位置上。</p>
+        </div>
+      </div>
+
+      <!-- 快捷键 -->
+      <div data-show="keys">
+        <div class="panel">
+          <h2>快捷键</h2>
+          <p class="row-sub" style="margin:0 0 var(--sp-2)">修改后需重启后台服务才会重新绑定。Wayland 下由 GNOME 门户管理；示例 ctrl+alt+z。</p>
+          <div class="row"><div class="row-main row-title">语音输入（按住说话）</div><input class="field key" value="ctrl+alt+z" /></div>
+          <div class="row"><div class="row-main row-title">截图翻译</div><input class="field key" value="ctrl+alt+x" /></div>
+          <div class="row"><div class="row-main"><div class="row-title">重复上次输入</div><div class="row-sub">润色失败时发送原文；焦点切走时重新输入</div></div><input class="field key" value="ctrl+alt+r" /></div>
+          <div style="display:flex;justify-content:flex-end;margin-top:var(--sp-2)"><button class="btn primary">保存快捷键</button></div>
+        </div>
+      </div>
+
+      <!-- 手机与接口 -->
+      <div data-show="conn">
+        <div class="two">
+          <div class="panel">
+            <h2>手机录入</h2>
+            <div style="display:flex;gap:var(--sp-3);align-items:flex-start">
+              <svg class="qr" data-qr="5" viewBox="0 0 25 25"></svg>
+              <div style="min-width:0"><div class="row-title">Wi-Fi · 192.168.1.23</div><div class="row-sub mono" style="word-break:break-all">https://192.168.1.23:8765/voice?token=••••</div><button class="btn sm" style="margin-top:var(--sp-2)"><svg class="ic"><use href="#i-copy"/></svg>复制网址</button></div>
+            </div>
+            <div class="row-sub" style="margin-top:var(--sp-2)">另有 1 个网卡：10.0.0.8 <button class="link">展开</button></div>
+            <ol class="steps"><li>手机与电脑连同一局域网</li><li>扫码，提示不安全时点"高级 → 继续"</li><li>按住说话，松开后输入到电脑光标处</li></ol>
+            <div class="warn-box">链接带专属令牌，只有拿到二维码的人能录入；泄露时刷新令牌并重启服务。装软件、删模型、改配置仅本机可用。</div>
+          </div>
+          <div class="panel">
+            <h2>开放接口</h2>
+            <div class="row"><div class="row-main"><div class="row-title">访问令牌</div><div class="row-sub mono">a8f3••••••••7c21</div></div><button class="btn sm"><svg class="ic"><use href="#i-copy"/></svg>复制</button></div>
+            <p class="row-sub" style="margin:0 0 var(--sp-2)">地址 <span class="mono">https://192.168.1.23:8765</span>，自签证书需忽略校验。</p>
+            <div class="ep"><span class="mono">recognize</span><span>音频 → 原始文本</span></div>
+            <div class="ep"><span class="mono">polish</span><span>文本 → 纠错结果</span></div>
+            <div class="ep"><span class="mono">translate</span><span>文本 → 译文</span></div>
+            <div class="ep"><span class="mono">ocr-translate</span><span>图片 → 分段文字与译文</span></div>
+            <div class="ep"><span class="mono">type</span><span>文本 → 输入到本机焦点</span></div>
+            <div class="ep"><span class="mono">job / history</span><span>任务状态、最近记录</span></div>
+            <button class="btn sm" style="margin-top:var(--sp-2)">查看调用示例</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 历史 -->
+      <div data-show="history">
+        <div class="panel">
+          <h2>转写历史 <span class="pill">共 128 条</span></h2>
+          <div class="rec">
+            <div class="rec-head"><span>2026-11-09 10:42</span><span class="pill">本机</span><span class="pill accent">已润色</span><button class="btn sm"><svg class="ic"><use href="#i-copy"/></svg>复制</button></div>
+            <div class="rec-label">原始识别</div><div class="rec-text raw">今天下午三点我们在会议室讨论一下新版本的发布计化，嗯，还有千问的接入方案</div>
+            <div class="rec-label">润色结果</div><div class="rec-text">今天下午三点，我们在会议室讨论一下新版本的发布计划，还有 Qwen 的接入方案。</div>
+          </div>
+          <div class="rec">
+            <div class="rec-head"><span>2026-11-09 10:37</span><span class="pill">手机</span><span class="pill danger">润色失败 · 未输入</span><button class="btn sm"><svg class="ic"><use href="#i-copy"/></svg>复制</button></div>
+            <div class="rec-label">识别结果</div><div class="rec-text">把这个函数拆成两个，一个负责读取一个负责校验</div>
+          </div>
+          <div class="rec">
+            <div class="rec-head"><span>2026-11-09 10:31</span><span class="pill">重发</span><button class="btn sm"><svg class="ic"><use href="#i-copy"/></svg>复制</button></div>
+            <div class="rec-label">识别结果</div><div class="rec-text">好的，收到。</div>
+          </div>
+        </div>
+        <button class="btn" style="width:100%;justify-content:center">加载更多（3 / 128）</button>
+      </div>
+
+      <!-- 系统 -->
+      <div data-show="system">
+        <div class="panel">
+          <h2>系统能力 <span class="pill">Linux · Wayland</span></h2>
+          <div class="check"><span class="dot"></span>portal 截图<span>可用</span></div>
+          <div class="check"><span class="dot"></span>portal 全局快捷键<span>可用</span></div>
+          <div class="check bad"><span class="dot"></span>xclip（剪贴板）<span>不可用</span></div>
+          <div class="row-sub" style="margin-top:var(--sp-2)">安装命令：<span class="mono">sudo apt install xclip</span>（列表由后端按平台给出）</div>
+        </div>
+        <div class="panel"><h2>关于</h2><div class="row-sub" style="font-size:var(--fs-sm)">Ollama Voice Input v3.0.0 · 作者 pp · MIT（沿用现有"关于"信息）</div></div>
+      </div>
+
+    </div>
+    </div>
+  </div>
+  <aside class="notes">
+    <h3>设置/管理页 · 数据与动作</h3>
+    <h4>显示的数据</h4>
+    <ul>
+      <li>顶部健康条：识别、润色/翻译、手机入口三项状态（从 <code>status get</code> 汇总，汇总规则由后端给出的就绪字段决定）</li>
+      <li>语音页：ASR 模型状态/大小/设备/下载进度；润色开关；Ollama 与 qwen3.5:4b 状态、安装日志、下载进度；关键词</li>
+      <li>截图翻译：目标语言（含仅识别）</li>
+      <li>快捷键：三个组合键与重启提示</li>
+      <li>手机与接口：每个网卡的网址/二维码、令牌、接口清单</li>
+      <li>历史：时间、来源、润色状态、原始识别、润色结果（与现有历史页同结构）</li>
+      <li>系统：平台能力列表、安装命令、版本</li>
+    </ul>
+    <h4>动作 → 接口</h4>
+    <ul>
+      <li>重新检测 → <code>status get</code>；各页读取 → <code>config get</code></li>
+      <li>下载识别模型 → <code>asr model download</code>；安装/启动 Ollama → <code>ollama install</code> / <code>ollama start</code>；下载 qwen3.5:4b → <code>model pull</code></li>
+      <li>润色开关、关键词、目标语言、快捷键 → <code>config set</code></li>
+      <li>手机入口/令牌 → <code>lan entry get</code>；复制走本地剪贴板</li>
+      <li>历史、加载更多 → <code>history list(limit, offset)</code></li>
+    </ul>
+    <h4>状态</h4>
+    <ul><li>左侧菜单各页、"润色模型缺失"（Ollama 安装中，按步骤排队）、"服务不可达"</li></ul>
+  </aside>
+</section>
+
+<!-- ================= 2 状态栏 + 字幕卡 ================= -->
+<section class="surface" id="s-status">
+  <div class="desk">
+    <div class="app">
+      <div class="app-bar">邮件 · 回复：版本发布</div>
+      <div class="app-body"><div style="color:#57606a">收到，我这边的安排是：</div><div id="c-input"><span class="caret"></span></div></div>
+    </div>
+    <div class="hud-dock" id="c-hud"></div>
+  </div>
+  <aside class="notes">
+    <h3>状态胶囊 + 字幕卡 · 数据与动作</h3>
+    <h4>显示的数据（<code>status events</code>）</h4>
+    <ul>
+      <li>胶囊：状态 + 录音时长</li>
+      <li>字幕卡：<code>recognize stream</code> 的已稳定文本 + 未稳定尾部（后端划定，前端用青色底标出"还可能变"）；定稿原文；润色后文本</li>
+      <li>错误：原因原文 + 补发键（读配置）</li>
+    </ul>
+    <h4>动作 → 接口</h4>
+    <ul>
+      <li>按住/松开语音键（平台层）→ <code>recognize stream</code> → <code>polish</code> → <code>type</code></li>
+      <li>重复键 → <code>repeat last</code></li>
+      <li>胶囊与字幕卡一起拖动；托盘"显示悬浮状态栏"开关保留</li>
+    </ul>
+    <h4>规则</h4>
+    <ul>
+      <li>字幕卡宽 420px、最多三行，向上长，超出只露最新三行；空闲时只剩胶囊</li>
+      <li>"已输入"卡片 2 秒后收起；错误卡片保留到下次操作</li>
+      <li>润色关闭时没有"润色中"这一步</li>
+    </ul>
+  </aside>
+</section>
+
+<!-- ================= 3 截图翻译浮窗 ================= -->
+<section class="surface" id="s-overlay">
+  <div class="desk" style="height:600px" id="overlay-stage">
+    <div class="page">
+      <div class="app-bar">example.com/release-notes</div>
+      <div class="page-body" style="padding-top:80px">
+        <div class="sel" id="c-sel">
+          <div class="blk"><div class="ln h">Release notes 3.0</div><div class="tb h" data-show="result">版本说明 3.0</div><div class="ob" data-show="ocronly"></div></div>
+          <div class="blk"><div class="ln">Speech recognition now runs fully on your device,</div><div class="ln">and the transcript appears while you are still talking.</div>
+            <div class="tb" data-show="result">语音识别现在完全在你的设备上运行，你还在说话时文字就已经出现。</div><div class="ob" data-show="ocronly"></div></div>
+          <div class="blk"><div class="ln">When you release the hotkey, a small local model fixes</div><div class="ln">typos and punctuation without rewriting your meaning.</div><div class="ln">Screenshots are translated right where the text is.</div>
+            <div class="tb" data-show="result">松开快捷键后，一个本地小模型会修正错别字和标点，而不改写你的原意。截图会在原文所在的位置直接翻译。</div><div class="ob" data-show="ocronly"></div></div>
+          <div class="corner" data-show="loading"><span class="loader"></span>识别翻译中…<span class="muted">Esc 取消</span></div>
+          <div class="corner" data-show="result"><span class="muted">3 段 · Esc / 点击外部关闭</span><button class="cbtn primary"><svg class="ic"><use href="#i-copy"/></svg>复制全部译文</button><button class="cbtn" aria-label="关闭"><svg class="ic"><use href="#i-x"/></svg></button></div>
+          <div class="corner" data-show="ocronly"><span class="muted">已识别 3 段（未翻译）</span><button class="cbtn primary"><svg class="ic"><use href="#i-copy"/></svg>复制文字</button><button class="cbtn" aria-label="关闭"><svg class="ic"><use href="#i-x"/></svg></button></div>
+          <div class="corner err" data-show="error"><svg class="ic"><use href="#i-alert"/></svg>没有识别到文字：选区里可能只有图片<button class="cbtn" aria-label="关闭"><svg class="ic"><use href="#i-x"/></svg></button></div>
+        </div>
+        <div class="other">Other text on the page that is outside the selection stays visible.</div>
+      </div>
+    </div>
+  </div>
+  <aside class="notes">
+    <h3>按段原位翻译 · 数据与动作</h3>
+    <h4>显示的数据</h4>
+    <ul>
+      <li>选区矩形（平台层）</li>
+      <li><code>ocr-translate</code> 返回<b>每一段</b>：段落框坐标（相对选区）、原文、译文；整段一起翻，语序自然</li>
+      <li>仅识别模式：每段原文与框（虚线标出）</li>
+      <li>失败：原因原文（示例为"没有识别到文字"）</li>
+    </ul>
+    <h4>动作 → 接口</h4>
+    <ul>
+      <li>截图键 → 平台层选区 → <code>ocr-translate(image, target_lang)</code></li>
+      <li>复制全部译文 / 复制文字 → 本地剪贴板</li>
+      <li>Esc / 点击外部 / 10 秒 → 关闭；加载 30 秒强制关闭</li>
+    </ul>
+    <h4>规则</h4>
+    <ul>
+      <li>译文卡与段落同宽，译文更长时向下长、盖住下方内容；更短时保持段落高度，把原文完全盖住</li>
+      <li>翻译失败只报错，不把原文当译文</li>
+    </ul>
+  </aside>
+</section>
+
+<!-- ================= 4 手机录音页 ================= -->
+<section class="surface" id="s-phone">
+  <div class="phone">
+    <div class="ph" id="phone-stage">
+      <h1>语音录入</h1>
+      <p class="sub">录音 → 识别 → 纠错 → 输入到电脑当前光标处</p>
+      <div class="ph-banner" data-show="token">缺少或无效的访问令牌。请在电脑"设置 → 手机与接口"重新扫码进入。</div>
+      <div class="ph-tabs" data-show="ready rec busy done polishfail fallback hist"><button class="on" id="c-tab-rec">录音</button><button id="c-tab-hist">历史</button></div>
+
+      <div class="ph-card" data-show="ready rec busy done polishfail fallback">
+        <div data-show="ready rec busy done polishfail"><button class="mic" id="c-mic"><svg class="ic"><use href="#i-mic"/></svg><span id="c-mic-text">按住说话</span></button></div>
+        <div data-show="fallback">
+          <p class="ph-status" style="margin-top:0">当前以 http 访问，浏览器禁止网页内录音。<br>点下面按钮调用手机系统录音：</p>
+          <label class="upload"><svg class="ic"><use href="#i-upload"/></svg>录音并上传<input type="file" accept="audio/*" capture hidden /></label>
+        </div>
+        <div class="ph-status" id="c-status"></div>
+        <div class="ph-result" data-show="done">今天下午三点，我们在会议室讨论一下新版本的发布计划，还有 Qwen 的接入方案。<div class="meta"><span class="pill accent">已润色</span><span>10:42</span></div></div>
+        <div class="ph-result" data-show="polishfail"><div style="font-size:var(--fs-xs);color:var(--c-muted)">识别原文（未输入）</div>把这个函数拆成两个，一个负责读取一个负责校验<div class="meta"><span class="pill danger">润色失败</span><button class="btn primary sm">发送原文</button></div></div>
+        <div class="ph-key" data-show="ready rec busy done polishfail">或按住 <kbd>空格</kbd> 说话 · <button class="link">改快捷键</button></div>
+      </div>
+
+      <div class="hlist" data-show="hist">
+        <div class="hhead">最近 5 条 · 点一下再次输入<button class="link">刷新</button></div>
+        <button class="hitem">今天下午三点，我们在会议室讨论一下新版本的发布计划，还有 Qwen 的接入方案。<div class="hmeta"><span class="pill">手机</span><span>11-09 10:42</span><span class="again">再次输入</span></div></button>
+        <button class="hitem">好的，收到。<div class="hmeta"><span class="pill">重发</span><span>11-09 10:31</span><span class="again">再次输入</span></div></button>
+        <button class="hitem">周五之前把测试报告发我。<div class="hmeta"><span class="pill">本机</span><span>11-08 18:05</span><span class="again">再次输入</span></div></button>
+        <button class="hitem">明天上午十点线上评审，链接稍后发群里。<div class="hmeta"><span class="pill">手机</span><span>11-08 16:20</span><span class="again">再次输入</span></div></button>
+        <button class="hitem">收到，谢谢。<div class="hmeta"><span class="pill">手机</span><span>11-08 15:02</span><span class="again">再次输入</span></div></button>
+      </div>
+    </div>
+  </div>
+  <aside class="notes">
+    <h3>手机录音页 · 数据与动作</h3>
+    <h4>显示的数据</h4>
+    <ul>
+      <li>令牌校验（<code>lan info</code>）</li>
+      <li>阶段文字：识别中 / 润色中 / 等待电脑 / 已输入 / 失败原因</li>
+      <li>结果文本与润色状态；润色失败时的原文</li>
+      <li>"历史"标签：最近 5 条（文本、来源、时间）</li>
+    </ul>
+    <h4>动作 → 接口</h4>
+    <ul>
+      <li>按住录音、松开上传 → <code>phone submit</code>；进度 → <code>job status</code></li>
+      <li>点历史条目、"发送原文" → <code>resend(text)</code></li>
+      <li>切到"历史"或点刷新 → <code>history list(limit=5)</code></li>
+      <li>非 https → 系统录音上传，同 <code>phone submit</code>；改快捷键 → 浏览器本地存储</li>
+    </ul>
+    <h4>和 A 的区别</h4>
+    <ul><li>录音与历史分成两个标签，录音页一屏放得下大按钮；视觉沿用现有手机页的暖色渐变按钮</li></ul>
+  </aside>
+</section>
+
+<script>
+const STATES = {
+  settings: [["voice", "语音"], ["missing", "润色模型缺失"], ["shot", "截图翻译"], ["keys", "快捷键"], ["conn", "手机与接口"], ["history", "历史"], ["system", "系统"], ["offline", "服务不可达"]],
+  status: [["idle", "空闲"], ["recording", "录音中（实时字幕）"], ["polishing", "润色中"], ["typed", "已输入"], ["polishfail", "润色失败"], ["errors", "其他错误/排队"]],
+  overlay: [["loading", "识别翻译中"], ["result", "按段译文"], ["ocronly", "仅识别文字"], ["error", "失败"]],
+  phone: [["ready", "就绪"], ["rec", "录音中"], ["busy", "识别/润色中"], ["done", "已输入"], ["polishfail", "润色失败"], ["hist", "历史标签"], ["token", "令牌无效"], ["fallback", "非 https 上传"]],
+};
+const TAB_OF = { missing: "voice", offline: "voice" };
+const FRAMES = [
+  ["", "今天下"], ["今天", "下午三"], ["今天下午", "三点我们"], ["今天下午三点我们", "在会议适"],
+  ["今天下午三点我们在会议", "室讨论一"], ["今天下午三点我们在会议室讨论", "一下新版"],
+  ["今天下午三点我们在会议室讨论一下新版本", "的发布计"], ["今天下午三点我们在会议室讨论一下新版本的发布", "计化，嗯"],
+  ["今天下午三点我们在会议室讨论一下新版本的发布计化，嗯，", "还有千问"],
+  ["今天下午三点我们在会议室讨论一下新版本的发布计化，嗯，还有千问", "的接入方"],
+];
+const RAW = "今天下午三点我们在会议室讨论一下新版本的发布计化，嗯，还有千问的接入方案";
+const POLISHED = "今天下午三点，我们在会议室讨论一下新版本的发布计划，还有 Qwen 的接入方案。";
+let timer = null;
+const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+const chip = (cls, label, extra = "") => `<div class="chipbar ${cls}"><span class="dot"></span><b>${label}</b>${extra}</div>`;
+const card = (cls, head, text) => `<div class="cap ${cls}"><div class="cap-head">${head}</div><div class="cap-text"><div>${text}</div></div></div>`;
+
+function renderStatus(state) {
+  const dock = document.getElementById("c-hud");
+  const input = document.getElementById("c-input");
+  input.innerHTML = '<span class="caret"></span>';
+  if (state === "idle") dock.innerHTML = chip("", "就绪");
+  if (state === "recording") {
+    let i = 0;
+    const draw = () => {
+      const [stable, tail] = FRAMES[i % FRAMES.length];
+      const sec = 1 + Math.floor((i % FRAMES.length) * 0.7);
+      dock.innerHTML = card("", `正在听…<span class="r">松开结束</span>`, `${esc(stable)}<span class="tail">${esc(tail)}</span>`) + chip("rec", "录音中", `<span class="t">0:0${sec}</span>`);
+      i++;
+    };
+    draw();
+    timer = setInterval(draw, 700);
+  }
+  if (state === "polishing") dock.innerHTML = card("", `定稿，正在纠错…`, `<span class="dim">${esc(RAW)}</span>`) + chip("busy", "润色中");
+  if (state === "typed") {
+    dock.innerHTML = card("", `已输入到当前窗口`, esc(POLISHED)) + chip("done", "已输入");
+    input.innerHTML = `<span class="typed">${esc(POLISHED)}</span><span class="caret"></span>`;
+  }
+  if (state === "polishfail") dock.innerHTML = card("err", `润色失败，未输入 · 本地模型无响应<span class="r">按 <kbd>Ctrl+Alt+R</kbd> 发送原文</span>`, esc(RAW)) + chip("err", "润色失败");
+  if (state === "errors") dock.innerHTML = [
+    chip("busy", "已排队", '<span class="t">前方 1 条</span>'),
+    chip("err", "焦点已切换，未输入", '<span class="t">Ctrl+Alt+R 重输</span>'),
+    chip("err", "没有识别到内容"),
+    chip("err", "麦克风打开失败", '<span class="t">设备被占用</span>'),
+    chip("err", "语音模型未就绪", '<span class="t">打开设置</span>'),
+  ].join("");
+}
+const PHONE = {
+  ready: ["", "就绪"], rec: ["", "录音中 0:03 · 松开结束"], busy: ["", "已上传，识别中…"], done: ["ok", "已输入到电脑"],
+  polishfail: ["err", "润色失败：本地模型无响应。原文未输入"], hist: ["", ""], token: ["err", ""], fallback: ["", ""],
+};
+function renderPhone(state) {
+  const mic = document.getElementById("c-mic");
+  mic.classList.toggle("rec", state === "rec");
+  mic.disabled = state === "busy";
+  document.getElementById("c-mic-text").textContent = state === "rec" ? "松开结束" : (state === "busy" ? "处理中" : "按住说话");
+  document.getElementById("c-tab-rec").classList.toggle("on", state !== "hist");
+  document.getElementById("c-tab-hist").classList.toggle("on", state === "hist");
+  const [cls, text] = PHONE[state];
+  const st = document.getElementById("c-status");
+  st.className = "ph-status " + cls;
+  st.textContent = text;
+}
+function applyShow(root, state) {
+  root.querySelectorAll("[data-show]").forEach((el) => { el.hidden = !el.dataset.show.split(" ").includes(state); });
+}
+function route() {
+  clearInterval(timer);
+  const [surface = "settings", stateArg] = location.hash.slice(1).split("/");
+  const list = STATES[surface] || STATES.settings;
+  const state = list.some(([k]) => k === stateArg) ? stateArg : list[0][0];
+  document.querySelectorAll(".surface").forEach((s) => s.classList.toggle("on", s.id === "s-" + surface));
+  document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.surface === surface));
+  document.getElementById("states").innerHTML = list.map(([k, t]) => `<button class="${k === state ? "on" : ""}" data-state="${k}">${t}</button>`).join("");
+  if (surface === "settings") {
+    applyShow(document.getElementById("settings-stage"), state);
+    const tab = TAB_OF[state] || state;
+    document.querySelectorAll("#ctabs button").forEach((b) => {
+      b.classList.toggle("on", b.dataset.tab === tab);
+      if (b.dataset.tab === tab) document.getElementById("c-title").textContent = b.textContent;
+    });
+  }
+  if (surface === "status") renderStatus(state);
+  if (surface === "overlay") {
+    applyShow(document.getElementById("overlay-stage"), state);
+    document.getElementById("c-sel").classList.toggle("dim", state === "loading");
+  }
+  if (surface === "phone") { applyShow(document.getElementById("phone-stage"), state); renderPhone(state); }
+}
+document.getElementById("tabs").addEventListener("click", (e) => { const s = e.target.dataset.surface; if (s) location.hash = s; });
+document.getElementById("states").addEventListener("click", (e) => {
+  const st = e.target.dataset.state; if (st) location.hash = location.hash.slice(1).split("/")[0] + "/" + st;
+});
+document.getElementById("ctabs").addEventListener("click", (e) => { const t = e.target.dataset.tab; if (t) location.hash = "settings/" + t; });
+document.getElementById("c-tab-rec").addEventListener("click", () => { location.hash = "phone/ready"; });
+document.getElementById("c-tab-hist").addEventListener("click", () => { location.hash = "phone/hist"; });
+document.querySelectorAll("svg[data-qr]").forEach((svg) => {
+  let seed = Number(svg.dataset.qr), cells = "";
+  const rnd = () => (seed = (seed * 9301 + 49297) % 233280) / 233280;
+  const finder = (x, y) => `<rect x="${x}" y="${y}" width="7" height="7" fill="currentColor"/><rect x="${x + 1}" y="${y + 1}" width="5" height="5" fill="#fff"/><rect x="${x + 2}" y="${y + 2}" width="3" height="3" fill="currentColor"/>`;
+  for (let y = 0; y < 25; y++) for (let x = 0; x < 25; x++) {
+    if (!((x < 8 && y < 8) || (x > 16 && y < 8) || (x < 8 && y > 16)) && rnd() > 0.52) cells += `<rect x="${x}" y="${y}" width="1" height="1" fill="currentColor"/>`;
+  }
+  svg.innerHTML = cells + finder(0, 0) + finder(18, 0) + finder(0, 18);
+});
+window.addEventListener("hashchange", route);
+route();
+</script>
+</body>
+</html>

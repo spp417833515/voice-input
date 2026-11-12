@@ -1,0 +1,154 @@
+/* 设置页：浅色左菜单 + 右侧内容。 */
+body.v3-setup {
+  min-height: 100vh;
+}
+
+.sa-layout {
+  display: grid;
+  grid-template-columns: 184px minmax(0, 1fr);
+  min-height: 100vh;
+  background: var(--c-surface);
+}
+
+.sa-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--sp-4) var(--sp-2);
+  background: var(--c-bg);
+  border-right: 1px solid var(--c-border);
+}
+.sa-nav-title {
+  font-weight: 700;
+  padding: 0 var(--sp-3) var(--sp-3);
+  color: var(--c-text);
+}
+.sa-nav button {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  padding: 7px var(--sp-3);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--c-muted);
+  cursor: pointer;
+}
+.sa-nav button:hover { color: var(--c-text); }
+.sa-nav button[aria-current="page"] {
+  background: var(--c-surface);
+  color: var(--c-accent);
+  font-weight: 600;
+  box-shadow: var(--shadow-1);
+}
+.sa-nav button:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.sa-nav button .dot { margin-left: auto; }
+.sa-nav-foot {
+  margin-top: auto;
+  padding: var(--sp-3);
+  font-size: var(--fs-xs);
+  color: var(--c-muted);
+  line-height: 1.6;
+}
+
+.sa {
+  color: var(--c-text);
+  font-size: var(--fs-md);
+  padding: var(--sp-5) var(--sp-6) var(--sp-6);
+  overflow: auto;
+  min-width: 0;
+}
+.sa-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--sp-4);
+}
+.sa-head h1 { margin: 0 0 var(--sp-1); font-size: var(--fs-xl); }
+.sa-head p { margin: 0; font-size: var(--fs-sm); }
+.sa h2 { font-size: var(--fs-lg); margin: var(--sp-5) 0 var(--sp-2); }
+
+.lan { display: flex; gap: var(--sp-4); align-items: flex-start; flex-wrap: wrap; }
+.lan-list { display: flex; flex-direction: column; gap: var(--sp-5); }
+.qr {
+  width: 132px;
+  height: 132px;
+  flex: none;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  padding: var(--sp-2);
+  background: var(--c-surface);
+  color: var(--c-text);
+}
+.qr img, .qr svg { width: 100%; height: 100%; display: block; }
+.lan ol { margin: 0 0 var(--sp-2); padding-left: 18px; font-size: var(--fs-sm); line-height: 1.7; }
+.url {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  word-break: break-all;
+  color: var(--c-muted);
+  margin-bottom: var(--sp-2);
+}
+
+details { font-size: var(--fs-sm); margin-top: var(--sp-2); }
+summary { cursor: pointer; color: var(--c-muted); }
+summary:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: 2px; }
+details p, details pre { margin: var(--sp-2) 0 0; }
+pre.code {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  background: var(--c-bg);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  padding: var(--sp-3);
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.rec { padding: var(--sp-3) var(--sp-4); border-top: 1px solid var(--c-border); }
+.rec:first-child { border-top: 0; }
+.rec-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--c-muted);
+}
+.rec-head .btn { margin-left: auto; padding: 2px 10px; font-size: var(--fs-xs); }
+.rec-text { margin-top: var(--sp-1); line-height: 1.6; }
+.rec details { margin-top: var(--sp-1); font-size: var(--fs-xs); }
+.more { display: flex; width: 100%; margin-top: var(--sp-2); justify-content: center; }
+
+.api-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+.api-table td { padding: var(--sp-2) var(--sp-3); border-top: 1px solid var(--c-border); vertical-align: top; }
+.api-table tr:first-child td { border-top: 0; }
+.api-table td:first-child { white-space: nowrap; width: 9em; }
+
+.empty {
+  padding: var(--sp-4);
+  color: var(--c-muted);
+  font-size: var(--fs-sm);
+}
+
+@media (max-width: 720px) {
+  .sa-layout {
+    grid-template-columns: 1fr;
+    min-height: 100vh;
+  }
+  .sa-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    border-right: 0;
+    border-bottom: 1px solid var(--c-border);
+  }
+  .sa-nav-title { width: 100%; padding-bottom: var(--sp-2); }
+  .sa-nav-foot { width: 100%; margin-top: var(--sp-2); }
+  .sa { padding: var(--sp-4); }
+  .sa-head { flex-direction: column; }
+  .field.key { width: 100%; }
+  .row { flex-wrap: wrap; }
+}

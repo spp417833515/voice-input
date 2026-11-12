@@ -1,3 +1,4 @@
+# 模板：install.sh 经 _v3/units.py 渲染到 ~/.config/systemd/user；@...@ 为占位符，不要直接复制。
 [Unit]
 Description=Ollama Voice Input - 全局快捷键守护进程
 After=ollama-voice-server.service
@@ -6,16 +7,21 @@ StartLimitBurst=5
 StartLimitIntervalSec=60
 
 [Service]
+# 生产门闩（_activation 唯一来源）：未关且非 ./start.sh --acceptance 时条件不满足→跳过，不启动、不重启循环。
+ExecCondition=@VENV@/bin/python3 @DIR@/_activation.py check
+RestartPreventExitStatus=78
 # Type=notify + WatchdogSec: 主循环卡死时(不再喂狗) systemd 在 20s 后 SIGABRT 重启。
-# NotifyAccess=all: sg 会 fork, python 非 MainPID, 需允许非主进程发 sd_notify。
+# 直接 exec python，不改 GID：sg/ setgid 会让进程不可 dumpable，
+# xdg-desktop-portal 无法打开 /proc/PID/root → GlobalShortcuts/Screenshot 被拒。
 Type=notify
-NotifyAccess=all
+NotifyAccess=main
 WatchdogSec=20
-WorkingDirectory=/home/spp/桌面/ollama-voice-input
+WorkingDirectory=@DIR@
 Environment=GDK_BACKEND=x11
 Environment=PYTHONUNBUFFERED=1
-Environment=LD_LIBRARY_PATH=/home/spp/桌面/ollama-voice-input/.venv/lib/python3.12/site-packages/nvidia/cublas/lib:/home/spp/桌面/ollama-voice-input/.venv/lib/python3.12/site-packages/nvidia/cudnn/lib:/home/spp/桌面/ollama-voice-input/.venv/lib/python3.12/site-packages/nvidia/cuda_nvrtc/lib
-ExecStart=/bin/bash -c 'exec sg input -c "DISPLAY=$DISPLAY GDK_BACKEND=$GDK_BACKEND XAUTHORITY=$XAUTHORITY WAYLAND_DISPLAY=$WAYLAND_DISPLAY XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR XDG_SESSION_TYPE=$XDG_SESSION_TYPE DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS NOTIFY_SOCKET=$NOTIFY_SOCKET WATCHDOG_USEC=$WATCHDOG_USEC LD_LIBRARY_PATH=$LD_LIBRARY_PATH /home/spp/桌面/ollama-voice-input/.venv/bin/python3 /home/spp/桌面/ollama-voice-input/daemon.py"'
+@CUDA_ENV@
+ExecStart=@VENV@/bin/python3 @DIR@/daemon.py
+
 Restart=always
 RestartSec=3
 

@@ -1,8 +1,10 @@
 #!/bin/bash
 # ============================================================================
 # Ollama Voice Input — 安装 / 更新脚本
-# 用法: ./install.sh            # 完整安装
-#       ./install.sh --update    # 仅更新依赖并重启
+# 用法: ./install.sh            # 完整安装（系统包/sudo/input 组/udev/依赖/单元/快捷方式；
+#                                #   仅当生产门闩已关闭才 enable 开机自启，见 _activation.py）
+#       ./install.sh --update    # 安全同步：只渲染 systemd 用户单元 + daemon-reload。
+#                                #   不 sudo、不装包、不改组/udev、不 pip、不 enable、不 start/restart
 #       ./install.sh --uninstall # 卸载
 #
 # 作者: pp  QQ: 417833515
@@ -29,14 +31,48 @@ RED='\033[0;31m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
+UNITS=(ollama-voice-ollama.service ollama-voice-asr.service ollama-voice-server.service ollama-voice-daemon.service)
+
+# 单元模板在 systemd/*.service，唯一渲染器 _v3/units.py（不调用 systemctl）。
+# server：v1 API + static/v3（https）；daemon：直接 exec python（禁止 sg input，portal 需要可 dumpable）；
+# asr：Qwen3-ASR sidecar 127.0.0.1:17946（权重就绪才启动）；ollama：项目内用户级 Ollama 127.0.0.1:11434。
+# 只写文件 + daemon-reload：不 enable、不 start。完整安装与 --update 共用这一处。
+render_units() {
+    if [ ! -x "$VENV/bin/python3" ]; then
+        echo -e "${RED}  缺少 $VENV，请先运行完整安装 ./install.sh${NC}"
+        exit 1
+    fi
+    mkdir -p "$SYSTEMD_DIR" "$LOG_DIR"
+    # CUDA 库路径（如有 NVIDIA GPU）
+    local cuda_libs="" nvidia_lib d
+    nvidia_lib="$VENV/lib/python$PYTHON_VER/site-packages/nvidia"
+    if [ -d "$nvidia_lib" ]; then
+        for d in "$nvidia_lib"/*/lib; do
+            [ -d "$d" ] && cuda_libs="$cuda_libs:$d"
+        done
+        cuda_libs="${cuda_libs#:}"
+    fi
+    (cd "$DIR" && "$VENV/bin/python3" -m _v3.units --project-dir "$DIR" --venv "$VENV" --cuda-libs "$cuda_libs" --out-dir "$SYSTEMD_DIR")
+    systemctl --user daemon-reload
+}
+
+# ---------- 安全同步（start.sh / restart.sh 调用）----------
+if [ "$1" = "--update" ]; then
+    render_units
+    echo -e "${GREEN}  systemd 用户单元已同步（未 enable / 未启动）✓${NC}"
+    exit 0
+fi
+
 # ---------- 卸载 ----------
 if [ "$1" = "--uninstall" ]; then
     echo -e "${YELLOW}正在卸载 Ollama Voice Input ...${NC}"
-    systemctl --user disable --now ollama-voice-server.service 2>/dev/null || true
-    systemctl --user disable --now ollama-voice-daemon.service 2>/dev/null || true
-    rm -f "$SYSTEMD_DIR/ollama-voice-server.service"
-    rm -f "$SYSTEMD_DIR/ollama-voice-daemon.service"
+    for unit in "${UNITS[@]}"; do
+        systemctl --user disable --now "$unit" 2>/dev/null || true
+        rm -f "$SYSTEMD_DIR/$unit"
+        rm -rf "$SYSTEMD_DIR/$unit.d"
+    done
     rm -f "$APP_MENU_DIR/$APP_NAME.desktop"
+    rm -f "$APP_MENU_DIR/ollama-voice-input-daemon.desktop"
     rm -f "$AUTOSTART_DIR/$APP_NAME.desktop"
     rm -f "$DESKTOP_DIR/$APP_NAME.desktop"
     rm -f "$ICON_INST_DIR/$APP_NAME.svg"
@@ -79,10 +115,12 @@ fi
 # 截图/剪贴板工具 (按会话类型)
 SESSION_TYPE="${XDG_SESSION_TYPE:-x11}"
 if [ "$SESSION_TYPE" = "wayland" ]; then
+    # 截图走 xdg-desktop-portal（GNOME 不支持 grim/slurp 的 wlr 接口）；
+    # 剪贴板优先 xclip（Mutter 桥接），wl-clipboard/wtype 作为兜底。
+    command -v xclip &>/dev/null || MISSING_PKGS+=(xclip)
     command -v wl-copy &>/dev/null || MISSING_PKGS+=(wl-clipboard)
-    command -v grim &>/dev/null || MISSING_PKGS+=(grim)
-    command -v slurp &>/dev/null || MISSING_PKGS+=(slurp)
     command -v wtype &>/dev/null || MISSING_PKGS+=(wtype)
+    python3 -c "import dbus" 2>/dev/null || MISSING_PKGS+=(python3-dbus)
 else
     command -v xclip &>/dev/null || MISSING_PKGS+=(xclip)
     command -v maim &>/dev/null || MISSING_PKGS+=(maim)
@@ -130,7 +168,7 @@ if [ ! -f "$VENV/bin/python3" ]; then
     echo -e "${GREEN}  虚拟环境已创建${NC}"
 fi
 
-"$VENV/bin/pip" install -q --upgrade pip 2>/dev/null
+"$VENV/bin/pip" install -q --upgrade pip
 "$VENV/bin/pip" install -q -r "$DIR/requirements.txt"
 echo -e "${GREEN}  Python 依赖就绪 ✓${NC}"
 
@@ -146,70 +184,17 @@ fi
 
 # ---------- 4. 生成 systemd 服务 ----------
 echo -e "${YELLOW}[4/6] 配置 systemd 用户服务...${NC}"
-mkdir -p "$SYSTEMD_DIR" "$LOG_DIR"
-
-# CUDA 库路径（如有 NVIDIA GPU）
-CUDA_LIBS=""
-NVIDIA_LIB="$VENV/lib/python$PYTHON_VER/site-packages/nvidia"
-if [ -d "$NVIDIA_LIB" ]; then
-    for d in "$NVIDIA_LIB"/*/lib; do
-        [ -d "$d" ] && CUDA_LIBS="$CUDA_LIBS:$d"
+render_units
+if env -u OVI_ACCEPTANCE_RUN python3 "$DIR/_activation.py" check >/dev/null 2>&1; then  # 只有官方门闩全关才自启；验收不自启
+    for unit in "${UNITS[@]}"; do
+        systemctl --user enable "$unit"
     done
-    CUDA_LIBS="${CUDA_LIBS#:}"
+    echo -e "${GREEN}  systemd 服务已注册并设为开机自启 ✓${NC}"
+else
+    # 门闩未关：只写单元，不设开机自启（单元自身 ExecCondition 也会拒启）；验收用 ./start.sh --acceptance。
+    echo -e "${YELLOW}  systemd 单元已写入；生产门闩未关闭，未设开机自启、未启动：${NC}"
+    env -u OVI_ACCEPTANCE_RUN python3 "$DIR/_activation.py" check || true
 fi
-
-cat > "$SYSTEMD_DIR/ollama-voice-server.service" << EOF
-[Unit]
-Description=Ollama Voice Input - Web 服务器
-After=network.target ollama.service
-StartLimitBurst=5
-StartLimitIntervalSec=60
-
-[Service]
-Type=simple
-WorkingDirectory=$DIR
-Environment=PYTHONUNBUFFERED=1
-${CUDA_LIBS:+Environment=LD_LIBRARY_PATH=$CUDA_LIBS}
-ExecStartPre=-/usr/bin/fuser -k -TERM 17945/tcp
-ExecStartPre=/bin/bash -c 'test -f $DIR/certs/cert.pem || $DIR/gen_cert.sh'
-ExecStart=$VENV/bin/uvicorn app:app --host 0.0.0.0 --port 17945 --ssl-keyfile $DIR/certs/key.pem --ssl-certfile $DIR/certs/cert.pem
-Restart=on-failure
-RestartSec=3
-
-[Install]
-WantedBy=default.target
-EOF
-
-cat > "$SYSTEMD_DIR/ollama-voice-daemon.service" << EOF
-[Unit]
-Description=Ollama Voice Input - 全局快捷键守护进程
-After=ollama-voice-server.service
-Wants=ollama-voice-server.service
-StartLimitBurst=5
-StartLimitIntervalSec=60
-
-[Service]
-# Type=notify + WatchdogSec: 主循环卡死时(不再喂狗) systemd 在 20s 后 SIGABRT 重启。
-# NotifyAccess=all: sg 会 fork, python 非 MainPID, 需允许非主进程发 sd_notify。
-Type=notify
-NotifyAccess=all
-WatchdogSec=20
-WorkingDirectory=$DIR
-Environment=GDK_BACKEND=x11
-Environment=PYTHONUNBUFFERED=1
-${CUDA_LIBS:+Environment=LD_LIBRARY_PATH=$CUDA_LIBS}
-ExecStart=/bin/bash -c 'exec sg input -c "DISPLAY=\$DISPLAY GDK_BACKEND=\$GDK_BACKEND XAUTHORITY=\$XAUTHORITY WAYLAND_DISPLAY=\$WAYLAND_DISPLAY XDG_RUNTIME_DIR=\$XDG_RUNTIME_DIR XDG_SESSION_TYPE=\$XDG_SESSION_TYPE DBUS_SESSION_BUS_ADDRESS=\$DBUS_SESSION_BUS_ADDRESS NOTIFY_SOCKET=\$NOTIFY_SOCKET WATCHDOG_USEC=\$WATCHDOG_USEC LD_LIBRARY_PATH=\$LD_LIBRARY_PATH $VENV/bin/python3 $DIR/daemon.py"'
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=default.target
-EOF
-
-systemctl --user daemon-reload
-systemctl --user enable ollama-voice-server.service
-systemctl --user enable ollama-voice-daemon.service
-echo -e "${GREEN}  systemd 服务已注册并设为开机自启 ✓${NC}"
 
 # ---------- 5. 生成 .desktop 文件 ----------
 echo -e "${YELLOW}[5/6] 创建桌面快捷方式...${NC}"
@@ -230,7 +215,20 @@ Type=Application
 Icon=$ICON_REF
 Categories=Utility;Audio;Accessibility;
 StartupNotify=false
-Keywords=voice;input;translate;screenshot;ollama;whisper;
+Keywords=voice;input;translate;screenshot;ollama;qwen;asr;
+EOF
+
+# daemon 专用 desktop 文件：portal 需要 app id，而 systemd 启动没有终端/desktop 上下文。
+# Host Registry 会读取这个 desktop 文件，把 daemon 识别成对应 app id。
+cat > "$APP_MENU_DIR/ollama-voice-input-daemon.desktop" << EOF
+[Desktop Entry]
+Type=Application
+Name=Ollama Voice Input Daemon
+Comment=Global hotkeys and screenshot translation for Ollama Voice Input
+Exec=$VENV/bin/python3 $DIR/daemon.py
+Terminal=false
+NoDisplay=true
+Categories=Utility;
 EOF
 
 # 桌面快捷方式
@@ -240,14 +238,11 @@ chmod +x "$DESKTOP_DIR/$APP_NAME.desktop" 2>/dev/null || true
 rm -f "$AUTOSTART_DIR/$APP_NAME.desktop" 2>/dev/null || true
 echo -e "${GREEN}  桌面快捷方式 + 应用菜单 已配置 ✓${NC}"
 
-# ---------- 6. 检查 Ollama ----------
-echo -e "${YELLOW}[6/6] 检查 Ollama...${NC}"
-if command -v ollama &>/dev/null; then
-    echo -e "${GREEN}  Ollama 已安装 ✓${NC}"
-else
-    echo -e "${YELLOW}  Ollama 未安装，正在安装...${NC}"
-    curl -fsSL https://ollama.com/install.sh | sh
-fi
+# ---------- 6. 本地模型（Ollama / Qwen3-ASR）----------
+# 不再用 curl | sh 做系统级安装：设置页「一键安装」把官方 Ollama 发行包校验后解压到项目缓存（不用 sudo），
+# 并拉取 qwen3.5:4b、下载 Qwen3-ASR 权重；完成后由 ollama-voice-ollama / ollama-voice-asr 用户单元运行。
+echo -e "${YELLOW}[6/6] 本地模型...${NC}"
+echo -e "${GREEN}  打开设置页完成 Ollama(qwen3.5:4b) 与 Qwen3-ASR 安装/下载: https://127.0.0.1:17945/setup${NC}"
 
 # ---------- 完成 ----------
 echo ""
@@ -256,15 +251,14 @@ echo -e "${CYAN}║              安装完成！                  ║${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "  ${GREEN}立即启动:${NC}"
-echo -e "    systemctl --user start ollama-voice-server"
-echo -e "    systemctl --user start ollama-voice-daemon"
+echo -e "    ./start.sh"
 echo -e "  ${GREEN}或双击桌面图标${NC}"
 echo ""
 echo -e "  ${GREEN}查看状态:${NC}"
 echo -e "    systemctl --user status ollama-voice-server"
 echo -e "    systemctl --user status ollama-voice-daemon"
 echo ""
-echo -e "  ${GREEN}设置页面:${NC}  http://127.0.0.1:17945/setup"
+echo -e "  ${GREEN}设置页面:${NC}  https://127.0.0.1:17945/setup"
 echo ""
 echo -e "  ${GREEN}更新:${NC}      cd \"$DIR\" && git pull && ./install.sh"
 echo -e "  ${GREEN}卸载:${NC}      ./install.sh --uninstall"

@@ -2,14 +2,13 @@ fastapi==0.116.1
 uvicorn[standard]==0.35.0
 python-multipart==0.0.20
 httpx==0.28.1
-faster-whisper==1.2.0
+# av 18 保留：dirty 工作区锁定版本（兼容既有 venv），不是 Whisper 专用
+av==18.0.0
 pytesseract>=0.3.10
 Pillow>=10.0
 pynput==1.8.1
 sounddevice==0.5.1
 numpy==2.2.4
-soundfile==0.13.1
 python-xlib>=0.33
 evdev>=1.7.0
-deep-translator>=1.11.4
 qrcode>=7.4

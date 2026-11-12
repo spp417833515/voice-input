@@ -14,6 +14,10 @@ logic_flow: |
     Title --> Out
 ---
 
+<!-- seg2-cutover -->
+> **切流后现状（2026-11-10，seg2）**：已迁到 `_linux/x11keys.py` parse_hotkey 与 `_hotkey.py`（normalize_hotkey / format_hotkey / to_portal_trigger / normalize_accel / parse_hotkey_evdev）。
+> 下文为切流前实现记录，行号指旧 daemon.py/app.py，仅作历史参考。
+
 # `_parse_hotkey`
 
 ## 表格区块

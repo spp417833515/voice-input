@@ -1,0 +1,27 @@
+# 模板：install.sh 经 _v3/units.py 渲染到 ~/.config/systemd/user；@...@ 为占位符，不要直接复制。
+# 官方 Qwen3-ASR sidecar，只绑 127.0.0.1:17946。权重未下载时不启动（设置页负责下载后再启动）。
+[Unit]
+Description=Ollama Voice Input - Qwen3-ASR 识别 sidecar（127.0.0.1:17946）
+ConditionPathExists=@ASR_MODEL_DIR@/config.json
+ConditionPathExists=@ASR_PYTHON@
+StartLimitBurst=3
+StartLimitIntervalSec=120
+
+[Service]
+# 生产门闩（_activation 唯一来源）：未关且非 ./start.sh --acceptance 时条件不满足→跳过，不启动、不重启循环。
+ExecCondition=@VENV@/bin/python3 @DIR@/_activation.py check
+RestartPreventExitStatus=78
+Type=simple
+WorkingDirectory=@DIR@
+Environment=PYTHONUNBUFFERED=1
+Environment=HF_HOME=@HF_HOME@
+Environment=HF_HUB_OFFLINE=1
+ExecStart=@ASR_PYTHON@ -m runtimes.asr serve --host 127.0.0.1 --port 17946 --load --warmup --model @ASR_MODEL_DIR@
+# sidecar 自己 setsid 并只回收自己派生的子孙（含 vLLM EngineCore）；SIGTERM 后给足退出时间。
+KillMode=mixed
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
